@@ -295,3 +295,14 @@ async def test_cookies_status(services):
     assert services.settings.cookies_path() == services.settings.uploaded_cookies
     bot, _ = await run(services, "cookies", 1, ["clear"])
     assert services.settings.cookies_path() is None
+
+
+async def test_gallery_on_unsupported_site_scrapes_the_page(services, web):
+    bot = FakeBot()
+    services.jobs.start(bot)
+    user = await services.db.upsert_user(34, "g", "G")
+    job = Job(user_id=34, chat_id=34, url=f"{web}/gallery.html", kind="gallery")
+    await services.jobs.submit(job, user)
+    await wait_done(job)
+    assert job.status == "done", job.error  # gallery-dl has no extractor; the page scraper took over
+    assert job.files_sent >= 3

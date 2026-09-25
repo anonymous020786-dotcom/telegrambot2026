@@ -55,3 +55,15 @@ async def test_cancel_from_progress_hook(settings, web, tmp_path):
 async def test_missing_media_raises(settings, web, tmp_path):
     with pytest.raises(DownloadError):
         await Downloader(settings).download(f"{web}/nope.mp4", Preset(embed_thumbnail=False), tmp_path / "n")
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"), [("thumbnail", "no thumbnail"), ("subs", "No subtitles found for language 'en'")]
+)
+async def test_missing_extras_are_explained(settings, web, tmp_path, mode, expected):
+    from bot.services.downloader import friendly_error
+
+    with pytest.raises(DownloadError) as info:
+        await Downloader(settings).download(f"{web}/sample.mp4", Preset(mode=mode, sub_lang="en"), tmp_path / mode)
+    assert expected in str(info.value)
+    assert "larger" not in friendly_error(info.value)  # never mislabelled as a size-limit problem

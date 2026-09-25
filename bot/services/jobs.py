@@ -610,6 +610,7 @@ class JobManager:
         opts = job.options
         limit = int(opts.get("limit") or self.settings.max_images_per_request)
         allow_adult = await self.policy.adult_allowed(user)
+        files: list[Path] | None = None
         if job.kind == "gallery":
             job.phase = "downloading"
             if not allow_adult:
@@ -619,9 +620,14 @@ class JobManager:
                     html = ""
                 if html and page_is_adult(html):
                     raise AdultBlocked()
-            files = await self.images.gallery_dl(job.url, out_dir, limit=limit)
-            job.title = job.title or domain_of(job.url)
-        else:
+            try:
+                files = await self.images.gallery_dl(job.url, out_dir, limit=limit)
+                job.title = job.title or domain_of(job.url)
+            except RuntimeError as exc:
+                if "unsupported url" not in str(exc).lower():
+                    raise
+                # gallery-dl has no extractor for this site: scrape the page's images instead.
+        if files is None:
             if job.kind == "imagelist":
                 found = [FoundImage(u, "direct") for u in opts.get("urls", [])]
                 job.title = job.title or f"{len(found)} images"

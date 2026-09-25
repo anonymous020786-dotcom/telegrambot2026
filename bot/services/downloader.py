@@ -461,7 +461,12 @@ class Downloader:
                 raise AdultBlocked()
             if info and info.get("is_live"):
                 raise DownloadError("Live streams can't be downloaded while they are live")
-            raise DownloadError("Nothing was downloaded (the format may be unavailable or too large)")
+            if preset.mode == "thumbnail":
+                raise DownloadError("This media has no thumbnail image")
+            if preset.mode == "subs":
+                lang = preset.sub_lang or "en"
+                raise DownloadError(f"No subtitles found for language '{lang}'. Try /subs <url> all")
+            raise DownloadError("Nothing was downloaded (the requested format may be unavailable)")
         return info, files
 
     async def download(

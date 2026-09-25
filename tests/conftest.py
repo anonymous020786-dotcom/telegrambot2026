@@ -293,3 +293,56 @@ def make_update(bot: FakeBot, user_id: int = 1, text: str = "", username: str = 
 def make_context(services, bot: FakeBot, args: list[str] | None = None):
     app = SimpleNamespace(bot_data={"svc": services}, job_queue=None)
     return SimpleNamespace(application=app, args=args or [], bot=bot)
+
+
+# ---------------------------------------------------------------- richer fakes for the all-commands test
+
+
+class FakeTgFile:
+    """Stands in for telegram.File: download_to_drive copies a local file."""
+
+    def __init__(self, source: Path):
+        self.source = source
+
+    async def download_to_drive(self, path, **kw: Any) -> Path:
+        import shutil as _shutil
+
+        _shutil.copy(self.source, path)
+        return Path(path)
+
+
+class FakeTgMedia(SimpleNamespace):
+    """A Video/Audio/Document/PhotoSize the bot can download (get_file → FakeTgFile)."""
+
+    def __init__(self, source: Path, **kw: Any):
+        super().__init__(
+            file_id=f"ID_{source.name}",
+            file_size=source.stat().st_size,
+            file_name=source.name,
+            mime_type=kw.pop("mime_type", None),
+            **kw,
+        )
+        self._source = source
+
+    async def get_file(self, **kw: Any) -> FakeTgFile:
+        return FakeTgFile(self._source)
+
+
+class FakeJobQueue:
+    def __init__(self) -> None:
+        self.jobs: list[SimpleNamespace] = []
+
+    def run_once(self, callback, when, data=None, name=None):
+        job = SimpleNamespace(callback=callback, when=when, data=data, name=name, removed=False)
+        job.schedule_removal = lambda: setattr(job, "removed", True)
+        self.jobs.append(job)
+        return job
+
+    def get_jobs_by_name(self, name):
+        return [j for j in self.jobs if j.name == name and not j.removed]
+
+
+def make_full_context(services, bot: FakeBot, args: list[str] | None = None):
+    app = SimpleNamespace(bot_data={"svc": services}, job_queue=FakeJobQueue(), bot=bot, stopped=False)
+    app.stop_running = lambda: setattr(app, "stopped", True)
+    return SimpleNamespace(application=app, args=args or [], bot=bot)
