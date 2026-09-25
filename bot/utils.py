@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -168,6 +169,19 @@ def safe_filename(name: str, limit: int = 120) -> str:
 def cache_key(url: str, preset: dict) -> str:
     raw = json.dumps({"u": url, "p": preset}, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def write_atomic(path: Path, data: bytes, mode: int = 0o644) -> None:
+    """Replace `path` so readers see the old file or the new one, never a partial write."""
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def file_digest(path: Path, algo: str = "sha256") -> str:

@@ -1,16 +1,18 @@
 """Content policy, social-media support, adult opt-in, cookies and site checks."""
 
 import asyncio
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from PIL import Image
+from yt_dlp.cookies import YoutubeDLCookieJar
 from yt_dlp.utils import DownloadError
 
 from bot.app import build_services, load_handlers
 from bot.handlers.common import guard
-from bot.handlers.content import on_adult_button, parse_cookie_file
+from bot.handlers.content import normalize_cookie_file, on_adult_button, parse_cookie_file
 from bot.registry import REGISTRY
 from bot.services import downloader as dl_module
 from bot.services.downloader import (
@@ -24,7 +26,7 @@ from bot.services.downloader import (
 from bot.services.jobs import Job, PolicyBlocked
 from bot.services.policy import drm_service, is_adult, is_blocked, normalize_domain
 from bot.services.sitecheck import PLATFORMS, default_targets
-from tests.conftest import FakeBot, make_context, make_update
+from tests.conftest import FakeBot, FakeMessage, FakeTgMedia, make_context, make_full_context, make_update
 
 load_handlers()
 
@@ -306,3 +308,24 @@ async def test_gallery_on_unsupported_site_scrapes_the_page(services, web):
     await wait_done(job)
     assert job.status == "done", job.error  # gallery-dl has no extractor; the page scraper took over
     assert job.files_sent >= 3
+
+
+async def test_uploaded_cookies_always_load_in_ytdlp(services, tmp_path):
+    """Exports without the Netscape header (or with a BOM) must still work, and the save must be atomic/private."""
+    upload = tmp_path / "export.txt"
+    upload.write_text("﻿.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n", encoding="utf-8")
+    bot = FakeBot()
+    update = make_update(bot, 1, text="/cookies")
+    update.effective_message.reply_to_message = FakeMessage(
+        bot, 1, document=FakeTgMedia(upload), delete=lambda: asyncio.sleep(0)
+    )
+    await guard(REGISTRY["cookies"])(update, make_full_context(services, bot))
+    assert "saved for 1 domains" in bot.texts()[0]
+    saved = services.settings.uploaded_cookies
+    assert stat.S_IMODE(saved.stat().st_mode) == 0o600
+    assert not list(saved.parent.glob(".cookies.txt.*.tmp"))  # no temp file left behind
+    jar = YoutubeDLCookieJar(str(saved))
+    jar.load()  # raises "does not look like a Netscape format cookies file" without the header
+    assert [c.name for c in jar] == ["sessionid"]
+    already = "# Netscape HTTP Cookie File\n.x.test\tTRUE\t/\tTRUE\t0\ta\tb\n"
+    assert normalize_cookie_file(already) == already  # never doubled
