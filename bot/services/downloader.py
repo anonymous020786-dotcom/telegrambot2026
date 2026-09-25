@@ -255,7 +255,11 @@ def build_options(
     out_dir: Path,
     hook: Callable[[dict[str, Any]], None] | None = None,
     allow_adult: bool = True,
+    referer: str | None = None,
 ) -> dict[str, Any]:
+    headers = {"User-Agent": settings.user_agent}
+    if referer:
+        headers["Referer"] = referer  # hotlink-protected streams found by the page fallback
     opts: dict[str, Any] = {
         "quiet": True,
         "logger": YTDLP_LOGGER,
@@ -278,7 +282,7 @@ def build_options(
         "ignoreerrors": "only_download" if preset.playlist else False,
         "overwrites": True,
         "postprocessors": [],
-        "http_headers": {"User-Agent": settings.user_agent},
+        "http_headers": headers,
     }
     if settings.proxy:
         opts["proxy"] = settings.proxy
@@ -441,9 +445,10 @@ class Downloader:
         out_dir: Path,
         hook: Callable[[dict[str, Any]], None] | None = None,
         allow_adult: bool = True,
+        referer: str | None = None,
     ) -> tuple[dict[str, Any] | None, list[Path]]:
         out_dir.mkdir(parents=True, exist_ok=True)
-        opts = {**build_options(preset, self.settings, out_dir, hook, allow_adult), **js_runtime_opts()}
+        opts = {**build_options(preset, self.settings, out_dir, hook, allow_adult, referer), **js_runtime_opts()}
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -466,8 +471,9 @@ class Downloader:
         out_dir: Path,
         hook: Callable[[dict[str, Any]], None] | None = None,
         allow_adult: bool = True,
+        referer: str | None = None,
     ) -> tuple[dict[str, Any] | None, list[Path]]:
-        return await asyncio.to_thread(self.download_sync, url, preset, out_dir, hook, allow_adult)
+        return await asyncio.to_thread(self.download_sync, url, preset, out_dir, hook, allow_adult, referer)
 
 
 def supported_extractor(url: str) -> str | None:
@@ -522,3 +528,22 @@ def friendly_error(exc: BaseException) -> str:
     if "http error 403" in lowered:
         return "The site refused the request (403). It may block downloads or need cookies."
     return msg[:300] or exc.__class__.__name__
+
+
+_ADULT_CACHE: list[str] | None = None
+
+
+def adult_extractors() -> list[str]:
+    """yt-dlp extractors for adult sites (their sample videos are rated 18+)."""
+    global _ADULT_CACHE
+    if _ADULT_CACHE is None:
+        names = set()
+        for ie in yt_dlp.extractor.gen_extractor_classes():
+            if not ie.working() or ie.ie_key() == "Generic":
+                continue
+            ages = [t.get("info_dict", {}).get("age_limit") for t in ie.get_testcases(include_onlymatching=False)]
+            rated = [a for a in ages if a is not None]
+            if rated and sum(a >= 18 for a in rated) * 2 >= len(ages) and all(a >= 18 for a in rated):
+                names.add(getattr(ie, "IE_NAME", ie.ie_key()).split(":")[0])
+        _ADULT_CACHE = sorted(names, key=str.lower)
+    return _ADULT_CACHE

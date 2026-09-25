@@ -198,12 +198,17 @@ class ImageService:
 
     async def find(self, url: str) -> tuple[list[FoundImage], str]:
         """Image candidates on a page (or the URL itself if it is an image) and the page title."""
+        found, title, _ = await self.find_page(url)
+        return found, title
+
+    async def find_page(self, url: str) -> tuple[list[FoundImage], str, str]:
+        """Like find(), plus the page HTML ('' for direct image links)."""
         if looks_like_image_url(url):
-            return [FoundImage(url, "direct")], Path(urlparse(url).path).name or "image"
+            return [FoundImage(url, "direct")], Path(urlparse(url).path).name or "image", ""
         html, final_url = await self.fetch_page(url)
         if not html:
-            return [FoundImage(final_url, "direct")], "image"
-        return extract_images_from_html(html, final_url), page_title(html)
+            return [FoundImage(final_url, "direct")], "image", ""
+        return extract_images_from_html(html, final_url), page_title(html), html
 
     async def download(
         self,

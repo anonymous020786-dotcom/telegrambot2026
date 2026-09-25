@@ -178,7 +178,7 @@ async def wait_done(job, timeout=30):
 async def test_job_passes_adult_permission_and_reports_block(services, monkeypatch):
     seen = []
 
-    async def fake_download(url, preset, out_dir, hook=None, allow_adult=True):
+    async def fake_download(url, preset, out_dir, hook=None, allow_adult=True, referer=None):
         seen.append(allow_adult)
         raise AdultBlocked()
 

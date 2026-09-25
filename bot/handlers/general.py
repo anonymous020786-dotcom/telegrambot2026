@@ -13,7 +13,7 @@ from telegram import InlineKeyboardMarkup, Update
 from .. import __version__
 from ..db import User
 from ..registry import GROUPS, REGISTRY, by_group, command
-from ..services.downloader import extractor_names, supported_extractor
+from ..services.downloader import adult_extractors, extractor_names, supported_extractor
 from ..utils import ago, domain_of, esc, fmt_ts, human_duration, human_size
 from .common import Ctx, arg_text, is_allowed, reply, svc, url_from, usage
 
@@ -275,6 +275,20 @@ async def limits(update: Update, context: Ctx, user: User) -> None:
 async def sites(update: Update, context: Ctx, user: User) -> None:
     names = extractor_names()
     query = arg_text(context).lower()
+    if query == "adult":
+        s = svc(context)
+        if not await s.policy.adult_allowed(user):
+            await reply(
+                update, "🔞 Adult sites are hidden. If the admin allows it, adults can turn them on with /setadult."
+            )
+            return
+        adult = adult_extractors()
+        await reply(
+            update,
+            f"🔞 {len(adult)} adult sites have dedicated support:\n{esc(', '.join(adult))}\n\n"
+            "Other sites often work too: the bot looks for the video stream in the page itself.",
+        )
+        return
     if query:
         hits = [n for n in names if query in n.lower()]
         body = ", ".join(hits[:120]) or "No dedicated extractor, but /dl may still work via the generic extractor."
@@ -283,7 +297,7 @@ async def sites(update: Update, context: Ctx, user: User) -> None:
         await reply(
             update,
             f"🌐 {len(names)} sites have dedicated support, and any page with an embedded video or "
-            "direct media link works too.\nSearch with <code>/sites youtube</code>.",
+            "direct media link works too.\nSearch with <code>/sites youtube</code> (or <code>/sites adult</code>).",
         )
 
 

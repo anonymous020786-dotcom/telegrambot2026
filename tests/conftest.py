@@ -83,6 +83,16 @@ class _Handler(SimpleHTTPRequestHandler):
             self.send_header("Location", "/gallery.html")
             self.end_headers()
             return None
+        if path.startswith("/tube/"):
+            # A "site" yt-dlp has no extractor for: the stream URL only appears in a player config script.
+            port = self.server.server_port
+            rating = '<meta name="RATING" content="RTA-5042-1996-1400-1577-RTA">' if "adult" in path else ""
+            body = (
+                f"<html><head><title>Clip</title>{rating}</head><body><div id=player></div>"
+                f'<script>var player = new Player({{sources: [{{src: "http:\\/\\/127.0.0.1:{port}\\/sample.mp4",'
+                f' label: "720p"}}], poster: "/img/poster.png"}});</script></body></html>'
+            )
+            return self._send(body.encode(), "text/html; charset=utf-8")
         if path.startswith("/hotlink/"):
             ok = (self.headers.get("Referer") or "").startswith(f"http://127.0.0.1:{self.server.server_port}")
             return self._send(

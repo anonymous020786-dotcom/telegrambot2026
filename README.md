@@ -40,10 +40,16 @@ button menus throughout.
 | --- | --- | --- |
 | **Social media**: YouTube (incl. Shorts), Instagram (reels, posts, stories you can see), TikTok, X/Twitter, Facebook, Reddit, Threads*, Pinterest, Snapchat Spotlight, Tumblr, Bluesky, LinkedIn, Twitch, Kick, VK, Weibo, Bilibili… | ✅ | Dedicated yt-dlp extractors. Photo and carousel posts are fetched with gallery-dl automatically. Sites that require a login even for public posts work once an admin adds their **own** cookies with `/cookies`. |
 | **Video and audio platforms**: Vimeo, Dailymotion, SoundCloud, Bandcamp, Rumble, Odysee, archive.org, news sites, direct media links, pages with embedded players | ✅ | 1,800+ sites. Anything else with an embedded video or a direct link goes through the generic extractor. |
-| **Adult sites** hosting legal content | ⚙️ Opt-in | Off by default. An admin enables it with `/adult optin` (or `ADULT_CONTENT=optin`), then each user confirms they are 18+ with `/setadult`. Media the website rates 18+ is refused for everyone else, including its preview thumbnail. |
+| **Adult sites** hosting legal content | ⚙️ Opt-in | **61 sites with dedicated extractors** (xHamster, PornHub, XVideos, XNXX, YouPorn, RedTube, SpankBang, Eporner, Beeg, TNAFlix, ThisVid, RedGifs, Chaturbate, Stripchat…; `/sites adult` lists them all). Other sites usually work through the page-video fallback (below). Off by default: an admin enables it with `/adult optin` (or `ADULT_CONTENT=optin`), then each user confirms they are 18+ with `/setadult`. Media rated 18+ by the site, and pages that label themselves adult (RTA tag), are refused for everyone else, including the preview thumbnail. |
 | **Subscription OTT and streaming** (Netflix, Prime Video, Disney+, Hotstar Premium, Max, Hulu, Apple TV+, Spotify…) | ❌ | These services encrypt their streams with DRM. The bot **does not bypass DRM** and tells the user why. DRM-free clips, trailers and free catch-up TV that yt-dlp supports do work. |
 
 \* Threads is handled by gallery-dl rather than yt-dlp.
+
+**Any other website:** when yt-dlp has no extractor for a site, the bot reads the page itself. It looks for
+`<video>`/`<source>` tags, `og:video`, JSON-LD `VideoObject`, links to MP4/WebM/HLS/DASH files, stream URLs
+inside the player's scripts, and embedded players that yt-dlp supports. It then downloads the best stream it
+finds, sending the page as Referer. This works for most sites that serve an unencrypted stream. It can't work for
+DRM-encrypted streams, or for sites that build the stream URL with obfuscated code at play time.
 
 Admins can check live from the server which platforms currently work with **`/sitecheck`**. It tests the sample
 links yt-dlp maintains for each platform. They can also block any domain with `/blocksite`. When a site changes,
@@ -133,7 +139,7 @@ deploy/             systemd unit, Ubuntu installer, AWS CloudFormation + scripts
 
 ```bash
 pip install -r requirements-dev.txt     # plus ffmpeg on your PATH
-python -m pytest -q                     # 106 tests
+python -m pytest -q                     # 124 tests
 ruff check . && ruff format --check .
 python -m scripts.gen_commands          # regenerate COMMANDS.md after changing commands
 python -m scripts.gen_commands --botfather   # command list to paste into @BotFather
