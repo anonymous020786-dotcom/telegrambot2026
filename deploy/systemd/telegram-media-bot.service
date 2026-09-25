@@ -1,0 +1,27 @@
+[Unit]
+Description=Telegram media downloader bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mediabot
+Group=mediabot
+WorkingDirectory=/opt/telegram-media-bot
+EnvironmentFile=/opt/telegram-media-bot/.env
+Environment=DATA_DIR=/var/lib/telegram-media-bot
+ExecStart=/opt/telegram-media-bot/.venv/bin/python -m bot
+Restart=always
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/telegram-media-bot /opt/telegram-media-bot/.venv
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

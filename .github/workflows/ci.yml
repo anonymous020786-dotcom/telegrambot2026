@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - run: pip install -r requirements-dev.txt
+      - name: Tests (unit, ffmpeg tools, local downloads, full bot boot)
+        run: python -m pytest -q -o faulthandler_timeout=120
+
+  deploy-files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cfn-lint
+      - name: CloudFormation template
+        run: cfn-lint deploy/aws/cloudformation.yaml
+      - name: Shell scripts
+        run: shellcheck deploy/install.sh deploy/aws/deploy.sh deploy/aws/update.sh
+      - name: docker compose file
+        run: cp .env.example .env && docker compose config -q && docker compose --profile local-api config -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: telegram-media-bot:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the image
+        run: |
+          docker run --rm telegram-media-bot:ci python -c "import bot.app as a; a.load_handlers(); from bot.registry import REGISTRY; assert len(REGISTRY) >= 150; print(len(REGISTRY), 'commands')"
+          docker run --rm telegram-media-bot:ci ffmpeg -hide_banner -version | head -1

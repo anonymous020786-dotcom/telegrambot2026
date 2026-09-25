@@ -1,0 +1,236 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Private Telegram media downloader bot on EC2 (Docker), with the bot token in Secrets Manager
+  and an S3 bucket for delivering files larger than Telegram's upload limit.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Bot }
+        Parameters: [BotToken, AdminIds, RepoUrl, RepoBranch]
+      - Label: { default: Server }
+        Parameters: [InstanceType, VolumeSize, LatestAmiId, KeyName]
+      - Label: { default: Large files }
+        Parameters: [EnableLinkServer, LinkAllowedCidr, S3RetentionDays]
+
+Parameters:
+  BotToken:
+    Type: String
+    NoEcho: true
+    MinLength: 20
+    Description: Token from @BotFather (stored in AWS Secrets Manager, never in plain text on the instance metadata).
+  AdminIds:
+    Type: String
+    AllowedPattern: "^[0-9]+(,[0-9]+)*$"
+    Description: Your Telegram user ID(s), comma-separated.
+  RepoUrl:
+    Type: String
+    Default: https://github.com/anonymous020786-dotcom/telegrambot2026.git
+    Description: Git repository to deploy (make it public, or use a URL with a read-only token).
+  RepoBranch:
+    Type: String
+    Default: main
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large, t3a.small, t3a.medium, m6i.large, c6i.large]
+    Description: t3.small (2 GB RAM) handles a few simultaneous downloads; pick medium/large for heavy use.
+  VolumeSize:
+    Type: Number
+    Default: 40
+    MinValue: 20
+    MaxValue: 1000
+    Description: Disk size in GB (downloads are stored temporarily before delivery).
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Optional EC2 key pair name. Leave empty and connect with AWS Systems Manager Session Manager instead.
+  EnableLinkServer:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Serve large files through expiring links on port 8080 (in addition to S3).
+  LinkAllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Who may reach the link server port.
+  S3RetentionDays:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    Description: Days before uploaded large files are deleted from S3.
+
+Conditions:
+  HasKey: !Not [!Equals [!Ref KeyName, ""]]
+  LinksOn: !Equals [!Ref EnableLinkServer, "true"]
+
+Resources:
+  BotSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Telegram bot token
+      SecretString: !Sub '{"BOT_TOKEN":"${BotToken}"}'
+
+  DownloadsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Retain
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-downloads
+            Status: Enabled
+            ExpirationInDays: !Ref S3RetentionDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  BucketTlsOnly:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DownloadsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt DownloadsBucket.Arn
+              - !Sub "${DownloadsBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: bot-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:PutObject, s3:GetObject, s3:AbortMultipartUpload]
+                Resource: !Sub "${DownloadsBucket.Arn}/*"
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref BotSecret
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  BotSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      # Outbound traffic is allowed by default; nothing inbound except the optional link server.
+      GroupDescription: Telegram media bot (outbound only, plus optional link server)
+      SecurityGroupIngress: !If
+        - LinksOn
+        - - IpProtocol: tcp
+            FromPort: 8080
+            ToPort: 8080
+            CidrIp: !Ref LinkAllowedCidr
+            Description: Large-file download links
+        - !Ref AWS::NoValue
+
+  BotInstance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT20M
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      KeyName: !If [HasKey, !Ref KeyName, !Ref AWS::NoValue]
+      SecurityGroupIds: [!GetAtt BotSecurityGroup.GroupId]
+      MetadataOptions:
+        HttpTokens: required
+        HttpEndpoint: enabled
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref VolumeSize
+            VolumeType: gp3
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-bot"
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -euxo pipefail
+            dnf install -y docker git jq
+            systemctl enable --now docker
+            mkdir -p /usr/local/lib/docker/cli-plugins
+            ARCH=$(uname -m)
+            curl -fsSL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$ARCH" \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+            chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+            git clone --depth 1 --branch "${RepoBranch}" "${RepoUrl}" /opt/telegram-media-bot
+            cd /opt/telegram-media-bot
+            TOKEN=$(aws secretsmanager get-secret-value --region ${AWS::Region} --secret-id "${BotSecret}" \
+              --query SecretString --output text | jq -r .BOT_TOKEN)
+            IMDS=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+            PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $IMDS" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+            cp .env.example .env
+            sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=$TOKEN|" .env
+            sed -i "s|^ADMIN_IDS=.*|ADMIN_IDS=${AdminIds}|" .env
+            sed -i "s|^S3_BUCKET=.*|S3_BUCKET=${DownloadsBucket}|" .env
+            sed -i "s|^S3_REGION=.*|S3_REGION=${AWS::Region}|" .env
+            sed -i "s|^LINK_SECRET=.*|LINK_SECRET=$(openssl rand -hex 32)|" .env
+            if [ "${EnableLinkServer}" = "true" ] && [ -n "$PUBLIC_IP" ]; then
+              sed -i "s|^LINK_SERVER_ENABLED=.*|LINK_SERVER_ENABLED=true|" .env
+              sed -i "s|^LINK_BASE_URL=.*|LINK_BASE_URL=http://$PUBLIC_IP:8080|" .env
+            fi
+            chmod 600 .env
+            docker compose up -d --build
+            /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} --resource BotInstance --region ${AWS::Region} \
+              || (dnf install -y aws-cfn-bootstrap && /opt/aws/bin/cfn-signal -e 0 --stack ${AWS::StackName} \
+                  --resource BotInstance --region ${AWS::Region})
+          - {}
+
+Outputs:
+  InstanceId:
+    Value: !Ref BotInstance
+  PublicIp:
+    Value: !GetAtt BotInstance.PublicIp
+  ConnectCommand:
+    Description: Open a shell without SSH (needs the Session Manager plugin for the AWS CLI)
+    Value: !Sub "aws ssm start-session --target ${BotInstance} --region ${AWS::Region}"
+  LogsCommand:
+    Description: Follow the bot logs from that shell
+    Value: "cd /opt/telegram-media-bot && sudo docker compose logs -f bot"
+  DownloadsBucketName:
+    Value: !Ref DownloadsBucket
+  BotSecretArn:
+    Value: !Ref BotSecret

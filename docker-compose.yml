@@ -1,0 +1,39 @@
+# Quick start:   cp .env.example .env   (fill in BOT_TOKEN and ADMIN_IDS)   then   docker compose up -d
+#
+# 2 GB uploads:  also fill in TELEGRAM_API_ID / TELEGRAM_API_HASH (https://my.telegram.org), set
+#                BOT_API_BASE_URL / BOT_API_BASE_FILE_URL / BOT_API_LOCAL_MODE as shown in .env.example, then
+#                docker compose --profile local-api up -d
+services:
+  bot:
+    build: .
+    image: telegram-media-bot:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - bot-data:/data
+    ports:
+      # Only needed when LINK_SERVER_ENABLED=true (large-file download links).
+      - "${LINK_PORT:-8080}:8080"
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  telegram-bot-api:
+    # Self-hosted Telegram Bot API server: uploads up to 2000 MB instead of 50 MB.
+    image: aiogram/telegram-bot-api:latest
+    profiles: ["local-api"]
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-}
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      # Shares the bot's data volume at the same path so files can be uploaded by path (local mode).
+      - bot-data:/data
+      - tg-api:/var/lib/telegram-bot-api
+
+volumes:
+  bot-data:
+  tg-api:
