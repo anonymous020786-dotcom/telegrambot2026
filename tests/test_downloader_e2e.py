@@ -1,10 +1,13 @@
 """Real yt-dlp downloads against a local web server (no internet needed)."""
 
+import tempfile
+
 import pytest
 from yt_dlp.utils import DownloadError
 
 from bot.services import media
 from bot.services.downloader import Cancelled, Downloader, Preset
+from bot.services.images import ImageService
 from tests.conftest import needs_ffmpeg
 
 pytestmark = needs_ffmpeg
@@ -67,3 +70,19 @@ async def test_missing_extras_are_explained(settings, web, tmp_path, mode, expec
         await Downloader(settings).download(f"{web}/sample.mp4", Preset(mode=mode, sub_lang="en"), tmp_path / mode)
     assert expected in str(info.value)
     assert "larger" not in friendly_error(info.value)  # never mislabelled as a size-limit problem
+
+
+async def test_downloads_never_rewrite_the_shared_cookie_file(settings, web, tmp_path, monkeypatch):
+    """yt-dlp saves its cookie jar on exit; concurrent jobs sharing one file could read it half-written."""
+    scratch = tmp_path / "tmp"
+    scratch.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+    original = "# Netscape HTTP Cookie File\n.127.0.0.1\tTRUE\t/\tFALSE\t0\tsession\tabc\n"
+    settings.uploaded_cookies.write_text(original)
+    dl = Downloader(settings)
+    await dl.probe(f"{web}/sample.mp4")
+    await dl.download(f"{web}/sample.mp4", Preset(embed_thumbnail=False), tmp_path / "v")
+    with pytest.raises(RuntimeError):
+        await ImageService(settings).gallery_dl(f"{web}/gallery.html", tmp_path / "g")
+    assert settings.uploaded_cookies.read_text() == original  # untouched: each run used a private copy
+    assert list(scratch.iterdir()) == []  # and the copies were removed

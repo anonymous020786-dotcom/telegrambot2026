@@ -20,7 +20,8 @@ button menus throughout.
   rotate, resize, GIF, frame capture, volume, reverse, voice message, round video message, media info, and image
   convert/resize/EXIF.
 - **Download queue**: parallel workers with a per-user limit and daily quotas, pause and resume, move to front,
-  retry, and instant re-sending of files already downloaded (cached by Telegram file ID).
+  retry, and instant re-sending of files already downloaded (cached by Telegram file ID). The queue survives
+  restarts, updates and crashes: waiting and interrupted downloads resume automatically, and pauses are kept.
 - **Library**: history, favorites, search, one-tap re-download, CSV export.
 - **Subscriptions**: watch a channel or playlist and get new uploads automatically. You can also **schedule**
   downloads ("in 2h", "18:30", "2026-10-01 08:00", in your time zone).

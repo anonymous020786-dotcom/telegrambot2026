@@ -6,10 +6,12 @@ import asyncio
 import contextlib
 import heapq
 import itertools
+import json
 import logging
 import secrets
 import shutil
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -60,6 +62,7 @@ class Job:
     cancelled: bool = False
     files_sent: int = 0
     bytes_sent: int = 0
+    resumed: bool = False  # re-queued after a bot restart
 
     @property
     def fraction(self) -> float:
@@ -84,6 +87,8 @@ def progress_text(job: Job) -> str:
         else {"images": "images", "gallery": "gallery", "imagelist": "images"}.get(job.kind, job.kind)
     )
     lines = [f"{icon} <b>{phase}</b> · {esc(what)}", f"<b>{esc(truncate(job.title or job.url, 90))}</b>"]
+    if job.resumed and job.phase == "queued":
+        lines.append("♻️ Resumed after a bot restart")
     if job.phase == "downloading":
         if job.total:
             lines.append(f"{progress_bar(job.fraction)} {job.fraction * 100:4.1f}%")
@@ -169,6 +174,8 @@ class JobManager:
         self._workers: list[asyncio.Task] = []
         self.held_users: set[int] = set()
         self.paused_all = False
+        self._stopping = False
+        self._background_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------ lifecycle
     def start(self, bot: Bot) -> None:
@@ -177,6 +184,8 @@ class JobManager:
             self._workers.append(asyncio.create_task(self._worker(i), name=f"job-worker-{i}"))
 
     async def stop(self) -> None:
+        # Unfinished jobs stay in pending_jobs, so restore() picks them up on the next start.
+        self._stopping = True
         for job in self.jobs.values():
             job.cancelled = True
         for task in self._workers:
@@ -185,6 +194,103 @@ class JobManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._workers.clear()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+
+    # ------------------------------------------------------------------ persistence (survives restarts)
+    def _background(self, coro: Coroutine[Any, Any, Any]) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:  # no running loop (sync tests): nothing to persist to
+            coro.close()
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _db_quietly(self, what: str, coro: Coroutine[Any, Any, Any]) -> None:
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001 - persistence must never break the queue itself
+            log.warning("could not %s: %s", what, exc)
+
+    @staticmethod
+    def _pending_row(job: Job) -> dict[str, Any]:
+        return {
+            "id": job.id,
+            "user_id": job.user_id,
+            "chat_id": job.chat_id,
+            "url": job.url,
+            "kind": job.kind,
+            "preset": json.dumps(job.preset.to_dict()),
+            "options": json.dumps(job.options),
+            "priority": job.priority,
+            "reply_to": job.reply_to,
+            "message_id": job.message_id,
+            "title": job.title,
+            "created_at": job.created_at,
+        }
+
+    def _forget_pending(self, job: Job) -> None:
+        self._background(self._db_quietly("forget a finished job", self.db.delete_pending(job.id)))
+
+    def _save_queue_state(self) -> None:
+        async def save() -> None:
+            await self.db.set_kv("held_users", json.dumps(sorted(self.held_users)))
+            await self.db.set_kv("paused_all", "1" if self.paused_all else "0")
+
+        self._background(self._db_quietly("save the queue state", save()))
+
+    async def set_paused_all(self, paused: bool) -> None:
+        self.paused_all = paused
+        self._wake.set()
+        await self._db_quietly("save the queue state", self.db.set_kv("paused_all", "1" if paused else "0"))
+
+    async def restore(self) -> int:
+        """Re-queue the jobs that were waiting or running when the bot last stopped (restart, update, crash)."""
+        self.held_users = set(json.loads(await self.db.get_kv("held_users", "[]") or "[]"))
+        self.paused_all = (await self.db.get_kv("paused_all", "0")) == "1"
+        restored = 0
+        for row in await self.db.pending_jobs():
+            if row["id"] in self.jobs:
+                continue
+            if self.bot and row["message_id"]:
+                # The old progress message would stay frozen; a fresh one follows.
+                with contextlib.suppress(TelegramError):
+                    await self.bot.delete_message(row["chat_id"], row["message_id"])
+            user = await self.db.get_user(row["user_id"])
+            reason = await self.policy.refusal(row["url"])
+            if user is None or user.is_banned or reason:
+                await self.db.delete_pending(row["id"])
+                if reason and self.bot:
+                    with contextlib.suppress(TelegramError):
+                        await self.bot.send_message(
+                            row["chat_id"], f"⚠️ A download queued before the restart was dropped: {esc(reason)}"
+                        )
+                continue
+            try:
+                preset = Preset.from_dict(json.loads(row["preset"]))
+                options = json.loads(row["options"])
+            except (TypeError, ValueError) as exc:
+                log.warning("dropping unreadable pending job %s: %s", row["id"], exc)
+                await self.db.delete_pending(row["id"])
+                continue
+            job = Job(
+                user_id=row["user_id"],
+                chat_id=row["chat_id"],
+                url=row["url"],
+                kind=row["kind"],
+                preset=preset,
+                options=options,
+                priority=row["priority"],
+                reply_to=row["reply_to"],
+                id=row["id"],  # same id → same work dir, so yt-dlp resumes its .part files
+                title=row["title"],
+                created_at=row["created_at"],
+                resumed=True,
+            )
+            await self._enqueue(job, user)
+            restored += 1
+        return restored
 
     # ------------------------------------------------------------------ queries
     def user_jobs(self, uid: int) -> list[Job]:
@@ -217,7 +323,12 @@ class JobManager:
         left = await self.remaining_quota(user)
         if left is not None and left <= 0:
             raise QuotaExceeded()
+        return await self._enqueue(job, user)
+
+    async def _enqueue(self, job: Job, user: User) -> Job:
         self.jobs[job.id] = job
+        # Saved before a worker can pick it up, so a finished job's delete always comes after this insert.
+        await self._db_quietly("save a queued job", self.db.save_pending(self._pending_row(job)))
         if user.id in self.held_users:
             job.status = "held"
         else:
@@ -235,6 +346,8 @@ class JobManager:
                 job.message_id = msg.message_id
             except TelegramError as exc:
                 log.warning("could not send progress message: %s", exc)
+            if job.message_id and job.status in ("queued", "held", "running"):
+                await self._db_quietly("save a queued job", self.db.save_pending(self._pending_row(job)))
         return job
 
     def cancel(self, job_id: str, uid: int | None = None) -> Job | None:
@@ -245,6 +358,7 @@ class JobManager:
         if job.status in ("queued", "held"):
             job.status = "cancelled"
             asyncio.get_running_loop().create_task(self._finish_message(job, "✖ Cancelled"))
+            self._forget_pending(job)
         return job
 
     def cancel_all(self, uid: int) -> int:
@@ -252,6 +366,7 @@ class JobManager:
 
     def hold(self, uid: int) -> int:
         self.held_users.add(uid)
+        self._save_queue_state()
         n = 0
         for j in self.user_jobs(uid):
             if j.status == "queued":
@@ -261,6 +376,7 @@ class JobManager:
 
     def release(self, uid: int) -> int:
         self.held_users.discard(uid)
+        self._save_queue_state()
         n = 0
         for j in self.user_jobs(uid):
             if j.status == "held":
@@ -318,6 +434,8 @@ class JobManager:
                 job.finished_at = time.time()
                 self._wake.set()
                 self._forget_later(job)
+                if not self._stopping:  # a job interrupted by shutdown stays pending for restore()
+                    self._forget_pending(job)
 
     def _forget_later(self, job: Job) -> None:
         async def forget() -> None:

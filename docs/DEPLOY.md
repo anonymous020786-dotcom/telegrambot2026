@@ -136,6 +136,10 @@ Websites change often, and yt-dlp releases fixes quickly.
 - **Docker:** `docker compose build --pull && docker compose up -d`.
 - **systemd:** `sudo bash deploy/install.sh` (it reinstalls the latest compatible versions).
 
+Updating or restarting never loses work: downloads that were waiting or running are saved in the database and
+resume on the next start (users see "Resumed after a bot restart"). Keep `data/` on a persistent volume, as the
+provided Docker and systemd setups do.
+
 ## Backups
 
 Send `/backup` in the bot to receive a copy of the SQLite database. On the server, the database is at

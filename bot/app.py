@@ -279,13 +279,15 @@ async def post_init(app: Application) -> None:
     jq.run_repeating(cleanup_job, interval=1800, first=300, name="cleanup")
     jq.run_repeating(check_all_watches, interval=s.settings.watch_interval_minutes * 60, first=120, name="watches")
     restored = await restore_schedules(app)
+    resumed = await s.jobs.restore()
     await set_menus(app, s.settings)
     me = await app.bot.get_me()
     log.info(
-        "Bot @%s ready · %d commands · %d schedules restored · upload limit %d MB",
+        "Bot @%s ready · %d commands · %d schedules restored · %d downloads resumed · upload limit %d MB",
         me.username,
         len(REGISTRY),
         restored,
+        resumed,
         s.settings.upload_limit_bytes // (1024 * 1024),
     )
 

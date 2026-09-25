@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import re
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -371,6 +374,43 @@ def collect_outputs(out_dir: Path, preset: Preset) -> list[Path]:
     return chosen or [p for p in files if ext_of(p) not in IMAGE_EXTS | SUB_EXTS | {".json"}]
 
 
+@contextlib.contextmanager
+def private_cookie_copy(path: str | Path | None) -> Iterator[str | None]:
+    """A throwaway 0600 copy of a cookies file, for one yt-dlp or gallery-dl run.
+
+    Both tools write their cookie jar back to the file when they finish (truncate, then rewrite). With several
+    downloads at once, one run could read the shared file mid-rewrite and fail with "does not look like a
+    Netscape format cookies file"; a read-only mounted file would make the write fail. The admin's file is
+    never modified this way either.
+    """
+    try:
+        data = Path(path).read_bytes() if path else None
+    except OSError:  # removed by /cookies clear a moment ago
+        data = None
+    if data is None:
+        yield None
+        return
+    fd, tmp = tempfile.mkstemp(prefix="cookies-", suffix=".txt")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        yield tmp
+    finally:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
+
+@contextlib.contextmanager
+def youtube_dl(opts: dict[str, Any]) -> Iterator[yt_dlp.YoutubeDL]:
+    """yt_dlp.YoutubeDL with a private cookie file (see private_cookie_copy)."""
+    with private_cookie_copy(opts.get("cookiefile")) as cookies:
+        opts = {k: v for k, v in opts.items() if k != "cookiefile"}
+        if cookies:
+            opts["cookiefile"] = cookies
+        with yt_dlp.YoutubeDL(opts) as ydl:  # closes (and saves cookies) before the copy is removed
+            yield ydl
+
+
 class Downloader:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -391,7 +431,7 @@ class Downloader:
         return {**opts, **js_runtime_opts()}
 
     def _extract(self, url: str, **extra: Any) -> dict[str, Any]:
-        with yt_dlp.YoutubeDL({**self._base_opts(), **extra}) as ydl:
+        with youtube_dl({**self._base_opts(), **extra}) as ydl:
             info = ydl.extract_info(url, download=False)
             if info is None:
                 raise DownloadError("No media found")
@@ -450,7 +490,7 @@ class Downloader:
         out_dir.mkdir(parents=True, exist_ok=True)
         opts = {**build_options(preset, self.settings, out_dir, hook, allow_adult, referer), **js_runtime_opts()}
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            with youtube_dl(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 info = ydl.sanitize_info(info) if info else None
         except DownloadCancelled as exc:
