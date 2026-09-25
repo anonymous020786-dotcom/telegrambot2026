@@ -16,7 +16,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Bot,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaAnimation,
+    InputMediaAudio,
+    InputMediaDocument,
+    InputMediaPhoto,
+    InputMediaVideo,
+)
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from yt_dlp.utils import DownloadCancelled, DownloadError
@@ -32,6 +41,15 @@ from .policy import ADULT_BLOCKED_MESSAGE, Policy
 from .siterules import SiteRules
 
 log = logging.getLogger(__name__)
+
+# Media types an inline message can be switched to (voice notes and video notes can't).
+INLINE_MEDIA = {
+    "video": InputMediaVideo,
+    "audio": InputMediaAudio,
+    "animation": InputMediaAnimation,
+    "photo": InputMediaPhoto,
+    "document": InputMediaDocument,
+}
 
 PROGRESS_INTERVAL = 2.5
 
@@ -63,6 +81,8 @@ class Job:
     files_sent: int = 0
     bytes_sent: int = 0
     resumed: bool = False  # re-queued after a bot restart
+    file_id: str | None = None  # Telegram file of a single-file result (lets inline mode post it anywhere)
+    file_kind: str | None = None
 
     @property
     def fraction(self) -> float:
@@ -557,6 +577,8 @@ class JobManager:
             await self._finish_message(job, "❌ Failed", retry=True)
         finally:
             reporter.cancel()
+            if job.options.get("inline_message_id"):
+                await self._update_inline(job, user)
             if job.status in ("failed", "cancelled"):
                 await self.db.add_history(
                     job.user_id,
@@ -569,6 +591,29 @@ class JobManager:
                 )
             if not used_link:
                 shutil.rmtree(out_dir, ignore_errors=True)
+
+    async def _update_inline(self, job: Job, user: User) -> None:
+        """Replace an inline-mode placeholder ("⏳ Downloading…") with the file, or say what happened."""
+        assert self.bot is not None
+        inline_id = job.options["inline_message_id"]
+        title = esc(truncate(job.title or job.url, 80))
+        try:
+            if job.status == "done" and job.file_id and job.file_kind in INLINE_MEDIA:
+                caption = self.caption(user, job.title, job.url, job.preset.label())
+                media = INLINE_MEDIA[job.file_kind](media=job.file_id, caption=caption, parse_mode=ParseMode.HTML)
+                await self.bot.edit_message_media(media=media, inline_message_id=inline_id)
+                return
+            if job.status == "done":
+                text = f"✅ <b>{title}</b>\nSent to your private chat with the bot (too large or several files)."
+            elif job.status == "cancelled":
+                text = f"✖ Cancelled: <b>{title}</b>"
+            elif "initiate conversation" in (job.error or "").lower() or "chat not found" in (job.error or "").lower():
+                text = "👋 Open a private chat with the bot and press <b>Start</b> once, then try again."
+            else:
+                text = f"❌ <b>{title}</b>\n{esc(job.error or 'Download failed')}"
+            await self.bot.edit_message_text(text, inline_message_id=inline_id, parse_mode=ParseMode.HTML)
+        except TelegramError as exc:
+            log.warning("could not update inline message for job %s: %s", job.id, exc)
 
     @staticmethod
     def _photo_post_fallback(job: Job, exc: Exception) -> bool:
@@ -640,6 +685,7 @@ class JobManager:
         cached = None if (job.preset.playlist or as_document or force_kind) else await self.db.cache_get(key)
         if cached:
             job.title = cached["title"]
+            job.file_id, job.file_kind = cached["file_id"], cached["kind"]
             caption = self.caption(user, cached["title"], job.url, f"{job.preset.label()} · ⚡ cached")
             await self.delivery.send_cached(
                 self.bot, job.chat_id, cached["kind"], cached["file_id"], caption, reply_to=job.reply_to
@@ -708,6 +754,8 @@ class JobManager:
                 first_file_id, first_kind = sent[0].file_id, sent[0].kind
             job.files_sent += 1
         job.bytes_sent = total_size
+        if first_file_id and len(files) == 1:
+            job.file_id, job.file_kind = first_file_id, first_kind
         if first_file_id and len(files) == 1 and not force_kind and not as_document:
             await self.db.cache_put(key, first_file_id, first_kind or "document", job.title, total_size)
         await self.db.add_history(

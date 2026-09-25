@@ -18,8 +18,10 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
+    ChosenInlineResultHandler,
     CommandHandler,
     ContextTypes,
+    InlineQueryHandler,
     MessageHandler,
     filters,
 )
@@ -46,6 +48,7 @@ def load_handlers() -> None:
         download,
         general,
         images,
+        inline,
         library,
         settings,
         tools,
@@ -160,7 +163,7 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from .handlers import admin, content, download, general, library, settings, tools
+    from .handlers import admin, content, download, general, inline, library, settings, tools
 
     query = update.callback_query
     data = query.data or ""
@@ -193,6 +196,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await admin.on_access_button(update, context, user)
     elif prefix == "adult":
         await content.on_adult_button(update, context, user)
+    elif prefix == "inl":
+        await inline.on_inline_button(update, context, user)
     elif prefix == "help":
         group = data.split(":", 1)[1]
         await query.answer()
@@ -325,6 +330,10 @@ def build_application(settings: Settings) -> Application:
     for cmd in REGISTRY.values():
         app.add_handler(CommandHandler(cmd.name, guard(cmd)))
     app.add_handler(CallbackQueryHandler(on_callback))
+    from .handlers.inline import on_chosen_inline_result, on_inline_query
+
+    app.add_handler(InlineQueryHandler(on_inline_query))
+    app.add_handler(ChosenInlineResultHandler(on_chosen_inline_result))
     media_filter = (
         filters.VIDEO
         | filters.AUDIO

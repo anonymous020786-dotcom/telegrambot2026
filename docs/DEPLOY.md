@@ -14,6 +14,9 @@ There are three ways to run the bot. Each keeps it running 24/7 and restarts it 
 2. Find your **Telegram user ID**: message **@userinfobot**, or start this bot later and send `/id`.
 3. Optionally, send `/setprivacy` → *Disable* to BotFather if you want the bot to see links in groups. The bot
    installs its own command menu at startup, so you don't need `/setcommands`.
+4. Optionally, turn on **inline mode** (`@yourbot <link>` in any chat): send `/setinline` to BotFather and pick a
+   placeholder such as "link or search…", then `/setinlinefeedback` → *100%* so downloads start the moment a
+   result is picked. Without feedback, users press the result's "▶️ Start download" button instead.
 
 ## A. Docker (any server or PC)
 

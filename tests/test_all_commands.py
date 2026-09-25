@@ -92,6 +92,7 @@ CASES: dict[str, tuple[list[str], str | None]] = {
     "blocksite": (["blocked.example"], None), "unblocksite": (["blocked.example"], None),
     "blockedsites": ([], None), "cookies": ([], "cookies"), "sitecheck": ([], None), "pagedebug": ([PAGE], None),
     "siterule": (["list"], None),
+    "inline": ([], None),
 }
 
 # Run after phase 1's downloads finish: they inspect or control the queue and history those produced.

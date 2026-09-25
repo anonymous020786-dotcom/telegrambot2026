@@ -221,6 +221,7 @@ class FakeBot:
         self.calls: list[tuple[str, Any]] = []
         self.sent_files: list[tuple[str, str]] = []
         self.username = "test_bot"
+        self.inline_edits: list[tuple[str | None, str, Any]] = []
 
     async def get_me(self):
         return SimpleNamespace(username=self.username, id=42)
@@ -229,8 +230,16 @@ class FakeBot:
         self.calls.append(("send_message", text))
         return FakeMessage(self, chat_id, text=text)
 
-    async def edit_message_text(self, text: str, chat_id: int, message_id: int, **kw: Any) -> None:
+    async def edit_message_text(
+        self, text: str, chat_id: int | None = None, message_id: int | None = None, **kw: Any
+    ) -> None:
         self.calls.append(("edit_message_text", text))
+        if kw.get("inline_message_id"):
+            self.inline_edits.append((kw["inline_message_id"], "text", text))
+
+    async def edit_message_media(self, media: Any, inline_message_id: str | None = None, **kw: Any) -> None:
+        self.calls.append(("edit_message_media", media.media))
+        self.inline_edits.append((inline_message_id, type(media).__name__, media.media))
 
     async def delete_message(self, chat_id: int, message_id: int) -> None:
         self.calls.append(("delete_message", message_id))
