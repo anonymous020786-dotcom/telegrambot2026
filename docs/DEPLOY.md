@@ -33,6 +33,9 @@ docker compose logs -f bot   # wait for "Bot @yourbot ready"
   boot.
 - **Data:** the database and temporary files live in the `bot-data` volume.
 - **Health check:** the container reports *unhealthy* if the bot stops responding. `docker ps` shows the status.
+- **Prebuilt image (no build on the server):** every release is published for amd64 and arm64 (AWS Graviton,
+  Raspberry Pi). Add `BOT_IMAGE=ghcr.io/anonymous020786-dotcom/telegrambot2026:latest` to `.env`, then run
+  `docker compose pull bot && docker compose up -d`. Pin a version (for example `:1.1.0`) to control upgrades.
 
 ## B. Your own server (systemd, no Docker)
 
@@ -136,12 +139,37 @@ splitting into playable parts.
 Websites change often, and yt-dlp releases fixes quickly.
 
 - **From Telegram:** an admin sends `/updateytdlp` and then `/restart`.
-- **Docker:** `docker compose build --pull && docker compose up -d`.
+- **Docker:** `docker compose build --pull && docker compose up -d`, or with the prebuilt image
+  `docker compose pull bot && docker compose up -d`.
 - **systemd:** `sudo bash deploy/install.sh` (it reinstalls the latest compatible versions).
 
 Updating or restarting never loses work: downloads that were waiting or running are saved in the database and
 resume on the next start (users see "Resumed after a bot restart"). Keep `data/` on a persistent volume, as the
 provided Docker and systemd setups do.
+
+## Releasing a new version
+
+1. Update `__version__` in `bot/__init__.py` and `version` in `pyproject.toml`, and add a `## [x.y.z]` section to
+   `CHANGELOG.md`.
+2. Merge to `main`, then push a tag: `git tag vx.y.z && git push origin vx.y.z`.
+3. The **Release** workflow checks that the tag, version and changelog match, runs the tests, publishes
+   `ghcr.io/anonymous020786-dotcom/telegrambot2026:x.y.z` (and `latest`), and creates a GitHub Release with the
+   changelog section as its notes.
+
+If `docker compose pull` says the image is private, open the package on GitHub (**your profile → Packages →
+telegrambot2026 → Package settings**) and set its visibility to **Public**, or run `docker login ghcr.io` on the server.
+
+## Security
+
+- **Private bot by default:** only `ADMIN_IDS`, `ALLOWED_USER_IDS` and invited users can use it (`PUBLIC_MODE=false`).
+- **SSRF protection:** links that point at localhost, private networks or cloud metadata are refused, including
+  through redirects. Leave `ALLOW_PRIVATE_URLS=false` unless you want to download from your own LAN.
+- **Least privilege:** the Docker image and the systemd service run as an unprivileged user; the AWS stack requires
+  IMDSv2 and keeps the bot token in Secrets Manager.
+- **Content policy:** DRM-protected services are refused; admins can block domains (`/blocksite`); 18+ content is off
+  unless an admin enables opt-in mode.
+- **Cookies:** only use your own account's cookies. They are stored with `0600` permissions and each download uses a
+  private copy.
 
 ## Backups
 

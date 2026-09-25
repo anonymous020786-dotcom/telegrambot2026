@@ -1,6 +1,6 @@
 [project]
 name = "telegram-media-bot"
-version = "1.0.0"
+version = "1.1.0"
 description = "Private Telegram bot that downloads public videos, audio and images from any website, with 130+ commands."
 readme = "README.md"
 requires-python = ">=3.11"

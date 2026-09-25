@@ -81,12 +81,16 @@ Open your bot in Telegram and send `/start`. Don't know your ID? Start the bot w
 put the number in `.env` and restart.
 
 **Other ways to run it:**
+- **Prebuilt Docker image** (amd64 and arm64, published on every release): set
+  `BOT_IMAGE=ghcr.io/anonymous020786-dotcom/telegrambot2026:latest` in `.env`, then
+  `docker compose pull bot && docker compose up -d`
 - **Your own Linux server with systemd:** `sudo bash deploy/install.sh`
 - **AWS (EC2 + S3 + Secrets Manager) in one command:** `BOT_TOKEN=... ADMIN_IDS=... ./deploy/aws/deploy.sh`
 - **Locally without Docker:** `python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt && python -m bot`
   (needs `ffmpeg` installed)
 
-See **[docs/DEPLOY.md](docs/DEPLOY.md)** for step-by-step instructions, 2 GB uploads, download links, S3 and updates.
+See **[docs/DEPLOY.md](docs/DEPLOY.md)** for step-by-step instructions, 2 GB uploads, download links, S3, updates,
+security and releasing. What changed in each version is in **[CHANGELOG.md](CHANGELOG.md)**.
 
 ## Using the bot
 
