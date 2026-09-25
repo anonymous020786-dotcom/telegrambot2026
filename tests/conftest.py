@@ -20,7 +20,10 @@ needs_ffmpeg = pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg not installed")
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    s = Settings(bot_token="123:TEST", admin_ids=[1], data_dir=tmp_path / "data", link_secret="s3cret")
+    # The local test web server is on 127.0.0.1, which the SSRF guard blocks by default (see test_netguard.py).
+    s = Settings(
+        bot_token="123:TEST", admin_ids=[1], data_dir=tmp_path / "data", link_secret="s3cret", allow_private_urls=True
+    )
     s.ensure_dirs()
     return s
 

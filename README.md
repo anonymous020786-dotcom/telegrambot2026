@@ -116,6 +116,7 @@ All settings are environment variables (see [.env.example](.env.example)). The m
 | `PUBLIC_MODE` | `false` | Let anyone use the bot |
 | `DAILY_LIMIT` | `200` | Downloads per user per day (`0` = unlimited) |
 | `MAX_CONCURRENT_JOBS` / `PER_USER_CONCURRENT_JOBS` | `3` / `2` | Parallel downloads |
+| `ALLOW_PRIVATE_URLS` | `false` | SSRF protection: links that resolve to localhost, private networks (10.x, 192.168.x…), link-local or cloud-metadata addresses are refused, including via redirects. Set `true` only to download from your own LAN |
 | `TRANSIENT_RETRIES` / `RETRY_DELAY_SECONDS` | `2` / `15` | Automatic retries after HTTP 429/5xx or network errors; each wait is 4× the previous (15 s, 60 s) |
 | `MAX_DOWNLOAD_MB` | `4000` | Refuse larger source files |
 | `BOT_API_BASE_URL` | – | Self-hosted Bot API server (2 GB uploads) |

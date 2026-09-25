@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     max_download_mb: int = 4000
     max_concurrent_jobs: int = 3
     per_user_concurrent_jobs: int = 2
+    allow_private_urls: bool = False  # let users fetch LAN/localhost addresses (off: SSRF protection)
     transient_retries: int = 2  # automatic retries after a rate limit / server error / network hiccup
     retry_delay_seconds: float = 15.0  # first retry waits this long, each next one 4× longer
     daily_limit: int = 200  # downloads per user per day, 0 = unlimited (admins are unlimited)
