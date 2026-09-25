@@ -342,7 +342,7 @@ async def updateytdlp(update: Update, context: Ctx, user: User) -> None:
         "install",
         "-U",
         "--no-cache-dir",
-        "yt-dlp[default]",
+        "yt-dlp[default,curl-cffi,deno]",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )

@@ -38,9 +38,34 @@ class Command:
     public: bool = False  # usable before access is granted
     menu: bool = True  # include in Telegram's "/" menu (max 100 per scope)
     needs_ffmpeg: bool = False
+    seq: int = 0  # registration order within the process (tie-breaker)
 
 
 REGISTRY: dict[str, Command] = {}
+
+# Handler modules in display order; keeps /help, menus and COMMANDS.md stable regardless of import order.
+MODULE_ORDER = (
+    "general",
+    "download",
+    "images",
+    "tools",
+    "library",
+    "settings",
+    "content",
+    "watch",
+    "utilities",
+    "admin",
+)
+
+
+def sort_key(cmd: Command) -> tuple[int, int, int]:
+    module = cmd.handler.__module__.rsplit(".", 1)[-1]
+    index = MODULE_ORDER.index(module) if module in MODULE_ORDER else len(MODULE_ORDER)
+    return index, cmd.handler.__code__.co_firstlineno, cmd.seq
+
+
+def ordered() -> list[Command]:
+    return sorted(REGISTRY.values(), key=sort_key)
 
 
 def command(
@@ -60,7 +85,9 @@ def command(
     def deco(fn: Handler) -> Handler:
         if name in REGISTRY:
             raise ValueError(f"duplicate command /{name}")
-        REGISTRY[name] = Command(name, group, description, fn, usage or f"/{name}", admin, public, menu, needs_ffmpeg)
+        REGISTRY[name] = Command(
+            name, group, description, fn, usage or f"/{name}", admin, public, menu, needs_ffmpeg, len(REGISTRY)
+        )
         return fn
 
     return deco
@@ -68,7 +95,7 @@ def command(
 
 def by_group(include_admin: bool = False) -> dict[str, list[Command]]:
     out: dict[str, list[Command]] = {g: [] for g in GROUPS}
-    for cmd in REGISTRY.values():
+    for cmd in ordered():
         if cmd.admin and not include_admin:
             continue
         out[cmd.group].append(cmd)
@@ -77,7 +104,7 @@ def by_group(include_admin: bool = False) -> dict[str, list[Command]]:
 
 def menu_commands(admin: bool = False, limit: int = 100) -> list[Command]:
     """Commands for Telegram's command menu (Telegram allows at most 100 per scope)."""
-    cmds = [c for c in REGISTRY.values() if c.menu and not c.admin]
+    cmds = [c for c in ordered() if c.menu and not c.admin]
     if admin:
-        cmds += [c for c in REGISTRY.values() if c.admin and c.menu]
+        cmds += [c for c in ordered() if c.admin and c.menu]
     return cmds[:limit]

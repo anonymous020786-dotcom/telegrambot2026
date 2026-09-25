@@ -139,6 +139,19 @@ def test_collect_outputs_filters(tmp_path: Path):
 def test_friendly_errors():
     assert "supported media page" in friendly_error(DownloadError("ERROR: Unsupported URL: https://x"))
     assert "DRM" in friendly_error(DownloadError("This video is DRM protected"))
-    assert "public" in friendly_error(DownloadError("Sign in to confirm your age"))
+    assert "public" in friendly_error(DownloadError("ERROR: This video is private"))
     assert "404" in friendly_error(DownloadError("HTTP Error 404: Not Found"))
     assert friendly_error(RuntimeError("")) == "RuntimeError"
+
+
+def test_friendly_errors_for_network_and_age():
+    proxy = (
+        "ERROR: [youtube] x: Unable to download API page: ('Unable to connect to proxy', OSError('Tunnel "
+        "connection failed: 403 Forbidden')) (caused by ProxyError('y')); please report this issue on https://x"
+    )
+    assert friendly_error(DownloadError(proxy)) == "The server's network or proxy blocked the connection to this site."
+    assert "age-restricted" in friendly_error(DownloadError("ERROR: Sign in to confirm your age"))
+    assert "rate-limiting" in friendly_error(DownloadError("ERROR: HTTP Error 429: Too Many Requests"))
+    assert "country" in friendly_error(DownloadError("ERROR: This video is not available in your country"))
+    tail = friendly_error(DownloadError("ERROR: [x] 1: New failure; please report this issue on https://x"))
+    assert tail == "[x] 1: New failure"

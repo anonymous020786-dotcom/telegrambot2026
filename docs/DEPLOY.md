@@ -148,6 +148,10 @@ Send `/backup` in the bot to receive a copy of the SQLite database. On the serve
 | The bot doesn't answer | Check the logs. `Unauthorized` means the token is wrong. |
 | "This is a private bot" for you | Your ID isn't in `ADMIN_IDS`. Send `/id` and add it, then restart. |
 | "Requested format is not available" | Send `/formats URL` to see what exists; try `/best`. |
-| A site stopped working | `/updateytdlp`, then `/restart`. |
+| A site stopped working | `/sitecheck` to see what fails, then `/updateytdlp` and `/restart`. |
+| "This media isn't public (it needs a login)" | Export **your own** browser cookies (Netscape `cookies.txt`, e.g. with the "Get cookies.txt LOCALLY" extension) and reply to the file with `/cookies`. |
+| "The site is rate-limiting this server (429)" / YouTube asks to "confirm you're not a bot" | Common on cloud/datacenter IPs. Add your cookies with `/cookies`, lower `MAX_CONCURRENT_JOBS`, or set `PROXY` to a residential/home connection. |
+| "The server's network or proxy blocked the connection" | The server's firewall/proxy doesn't allow that site. Check outbound HTTPS from the server. |
+| "DRM-protected streaming service" | Expected. The bot never bypasses DRM (Netflix, Prime Video, Disney+ and similar). |
 | Files over 50 MB arrive in parts | Expected without a local Bot API server, links or S3. See [Big files](#big-files). |
 | `ffmpeg isn't installed` | Docker already includes it; otherwise run `apt install ffmpeg`. |

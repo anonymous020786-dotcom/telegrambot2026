@@ -270,8 +270,8 @@ class ImageService:
         cmd += ["--quiet", "-D", str(dest), "--range", f"1-{limit}", "--no-mtime"]
         if self.settings.proxy:
             cmd += ["--proxy", self.settings.proxy]
-        if self.settings.cookies_file and Path(self.settings.cookies_file).is_file():
-            cmd += ["--cookies", str(self.settings.cookies_file)]
+        if cookies := self.settings.cookies_path():
+            cmd += ["--cookies", str(cookies)]
         cmd.append(url)
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE

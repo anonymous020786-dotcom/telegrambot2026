@@ -33,13 +33,25 @@ from .services.downloader import Downloader
 from .services.images import ImageService
 from .services.jobs import JobManager
 from .services.linkserver import LinkServer
+from .services.policy import Policy
 
 log = logging.getLogger("bot")
 
 
 def load_handlers() -> None:
     """Import handler modules so their @command decorators register."""
-    from .handlers import admin, download, general, images, library, settings, tools, utilities, watch  # noqa: F401
+    from .handlers import (  # noqa: F401
+        admin,
+        content,
+        download,
+        general,
+        images,
+        library,
+        settings,
+        tools,
+        utilities,
+        watch,
+    )
 
 
 def setup_logging(settings: Settings) -> None:
@@ -80,8 +92,9 @@ def build_services(settings: Settings) -> Services:
     downloader = Downloader(settings)
     images = ImageService(settings)
     delivery = Delivery(settings, links, s3)
-    jobs = JobManager(settings, db, downloader, images, delivery)
-    return Services(settings, db, downloader, images, delivery, jobs, links)
+    policy = Policy(db, settings)
+    jobs = JobManager(settings, db, downloader, images, delivery, policy)
+    return Services(settings, db, downloader, images, delivery, jobs, links, policy=policy)
 
 
 # ------------------------------------------------------------------ non-command updates
@@ -147,7 +160,7 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from .handlers import admin, download, general, library, settings, tools
+    from .handlers import admin, content, download, general, library, settings, tools
 
     query = update.callback_query
     data = query.data or ""
@@ -178,6 +191,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await admin.on_admin_button(update, context, user)
     elif prefix == "access":
         await admin.on_access_button(update, context, user)
+    elif prefix == "adult":
+        await content.on_adult_button(update, context, user)
     elif prefix == "help":
         group = data.split(":", 1)[1]
         await query.answer()

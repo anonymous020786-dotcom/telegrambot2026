@@ -23,8 +23,9 @@ from ..config import Settings
 from ..db import Database, User
 from ..utils import cache_key, domain_of, esc, human_duration, human_size, progress_bar, truncate
 from .delivery import Delivery, make_zip
-from .downloader import Cancelled, Downloader, Preset, friendly_error
+from .downloader import AdultBlocked, Cancelled, Downloader, Preset, friendly_error
 from .images import FoundImage, ImageService
+from .policy import ADULT_BLOCKED_MESSAGE, Policy
 
 log = logging.getLogger(__name__)
 
@@ -106,11 +107,53 @@ class QuotaExceeded(Exception):
     pass
 
 
+class PolicyBlocked(Exception):
+    """The URL is refused by content policy (DRM service or admin-blocked domain)."""
+
+
+# Social sites where a post can be photos only; yt-dlp then finds "no video" and gallery-dl takes over.
+PHOTO_POST_SITES = (
+    "instagram.com",
+    "x.com",
+    "twitter.com",
+    "tiktok.com",
+    "facebook.com",
+    "threads.net",
+    "threads.com",
+    "pinterest.com",
+    "reddit.com",
+    "tumblr.com",
+    "bsky.app",
+    "vk.com",
+    "weibo.com",
+    "imgur.com",
+    "flickr.com",
+    "deviantart.com",
+    "artstation.com",
+)
+NO_VIDEO_HINTS = (
+    "no video formats",
+    "no video in this",
+    "there's no video",
+    "no media found",
+    "no video could be found",
+    "unsupported url",
+    "nothing was downloaded",
+)
+
+
 class JobManager:
     def __init__(
-        self, settings: Settings, db: Database, downloader: Downloader, images: ImageService, delivery: Delivery
+        self,
+        settings: Settings,
+        db: Database,
+        downloader: Downloader,
+        images: ImageService,
+        delivery: Delivery,
+        policy: Policy | None = None,
     ):
         self.settings = settings
+        self.policy = policy or Policy(db, settings)
         self.db = db
         self.downloader = downloader
         self.images = images
@@ -166,6 +209,8 @@ class JobManager:
         return max(0, limit - used - pending)
 
     async def submit(self, job: Job, user: User) -> Job:
+        if reason := await self.policy.refusal(job.url):
+            raise PolicyBlocked(reason)
         left = await self.remaining_quota(user)
         if left is not None and left <= 0:
             raise QuotaExceeded()
@@ -356,7 +401,15 @@ class JobManager:
         used_link = False
         try:
             if job.kind == "media":
-                used_link = await self._run_media(job, user, out_dir)
+                try:
+                    used_link = await self._run_media(job, user, out_dir)
+                except DownloadError as exc:
+                    if not self._photo_post_fallback(job, exc):
+                        raise
+                    # A photo/carousel post on a social site: fetch the pictures with gallery-dl instead.
+                    shutil.rmtree(out_dir, ignore_errors=True)
+                    job.kind, job.options = "gallery", {**job.options, "mode": "auto", "limit": 50}
+                    used_link = await self._run_images(job, user, out_dir)
             else:
                 used_link = await self._run_images(job, user, out_dir)
             job.status = "done"
@@ -364,6 +417,10 @@ class JobManager:
         except (Cancelled, DownloadCancelled):
             job.status = "cancelled"
             await self._finish_message(job, "✖ Cancelled")
+        except AdultBlocked:
+            job.status = "failed"
+            job.error = ADULT_BLOCKED_MESSAGE
+            await self._finish_message(job, "🔞 Not downloaded")
         except DownloadError as exc:
             job.status = "failed"
             job.error = friendly_error(exc)
@@ -387,6 +444,16 @@ class JobManager:
                 )
             if not used_link:
                 shutil.rmtree(out_dir, ignore_errors=True)
+
+    @staticmethod
+    def _photo_post_fallback(job: Job, exc: Exception) -> bool:
+        domain = domain_of(job.url)
+        on_social = any(domain == d or domain.endswith("." + d) for d in PHOTO_POST_SITES)
+        return (
+            on_social
+            and job.preset.mode in ("video", "format")
+            and any(hint in str(exc).lower() for hint in NO_VIDEO_HINTS)
+        )
 
     def _preset_record(self, job: Job) -> dict[str, Any]:
         return {"kind": job.kind, "preset": job.preset.to_dict(), "options": job.options}
@@ -426,7 +493,8 @@ class JobManager:
             await self.db.add_usage(job.user_id, 1, 0)
             return False
 
-        info, files = await self.downloader.download(job.url, job.preset, out_dir, self._hook(job))
+        allow_adult = await self.policy.adult_allowed(user)
+        info, files = await self.downloader.download(job.url, job.preset, out_dir, self._hook(job), allow_adult)
         if job.cancelled:
             raise Cancelled()
         job.title = (info or {}).get("title") or job.title or files[0].stem
