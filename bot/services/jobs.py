@@ -27,6 +27,7 @@ from .downloader import AdultBlocked, Cancelled, Downloader, Preset, friendly_er
 from .images import FoundImage, ImageService
 from .pagevideo import find_videos, page_is_adult
 from .policy import ADULT_BLOCKED_MESSAGE, Policy
+from .siterules import SiteRules
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +156,7 @@ class JobManager:
     ):
         self.settings = settings
         self.policy = policy or Policy(db, settings)
+        self.site_rules = SiteRules(db)
         self.db = db
         self.downloader = downloader
         self.images = images
@@ -492,9 +494,15 @@ class JobManager:
         allow_adult = await self.policy.adult_allowed(user)
         if page_is_adult(html) and not allow_adult:
             raise AdultBlocked()
-        candidates = find_videos(html, final_url, embed_supported=lambda u: supported_extractor(u) is not None)
+        # Admin-defined /siterule patterns win; then everything the generic page scan finds.
+        ruled = await self.site_rules.candidates(html, final_url)
+        generic = find_videos(html, final_url, embed_supported=lambda u: supported_extractor(u) is not None)
+        candidates = ruled + [c for c in generic if c.url not in {r.url for r in ruled}]
         if not candidates:
-            raise DownloadError("No downloadable video was found on this page (it may be DRM-protected)")
+            raise DownloadError(
+                "No downloadable video stream was found on this page. It may be encrypted or assembled by scripts; "
+                "an admin can inspect it with /pagedebug and add a /siterule."
+            )
         last: Exception = original
         for candidate in candidates[:4]:
             try:

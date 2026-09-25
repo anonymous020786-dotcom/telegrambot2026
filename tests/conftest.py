@@ -83,6 +83,14 @@ class _Handler(SimpleHTTPRequestHandler):
             self.send_header("Location", "/gallery.html")
             self.end_headers()
             return None
+        if path.startswith("/custom/"):
+            # Stream only as a relative path in a JSON blob: the generic scan can't see it, a site rule can.
+            body = (
+                '<html><head><title>Custom site</title></head><body><div id="app"></div>'
+                '<script>window.__STATE__ = {"media": {"stream_path": "/sample.mp4", "q": 720}};</script>'
+                "</body></html>"
+            )
+            return self._send(body.encode(), "text/html; charset=utf-8")
         if path.startswith("/tube/"):
             # A "site" yt-dlp has no extractor for: the stream URL only appears in a player config script.
             port = self.server.server_port

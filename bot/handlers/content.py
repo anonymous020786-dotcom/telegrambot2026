@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import io
 import os
 import shutil
 
 from telegram import InlineKeyboardButton as B
-from telegram import InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ParseMode
 
 from ..db import User
 from ..registry import command
+from ..services.downloader import supported_extractor
+from ..services.pagevideo import find_videos, page_is_adult
 from ..services.policy import normalize_domain
 from ..services.sitecheck import check, default_targets
+from ..services.siterules import apply_rules, rules_for
 from ..utils import esc, extract_urls, human_duration, truncate
 from .common import Ctx, arg_text, fetch_replied_file, reply, svc, usage
 
@@ -208,3 +212,121 @@ async def sitecheck(update: Update, context: Ctx, user: User) -> None:
     lines.append("\nFailures are often fixed by /updateytdlp (then /restart), or by /cookies for login-walled sites.")
     if status:
         await status.edit_text("\n".join(lines), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+
+
+# ------------------------------------------------------------------ integrating new sites
+
+
+@command(
+    "pagedebug",
+    "admin",
+    "Show what the bot can find on a page (streams, extractor, adult label) + its HTML",
+    "/pagedebug <url>",
+    admin=True,
+)
+async def pagedebug(update: Update, context: Ctx, user: User) -> None:
+    s = svc(context)
+    urls = extract_urls(arg_text(context))
+    if not urls:
+        await reply(update, usage("pagedebug"))
+        return
+    url = urls[0]
+    lines = [f"🔬 <b>Page debug</b> · {esc(truncate(url, 80))}"]
+    extractor = supported_extractor(url)
+    lines.append(f"yt-dlp extractor: <b>{esc(extractor or 'none (generic)')}</b>")
+    if reason := await s.policy.refusal(url):
+        lines.append(f"Policy: {esc(reason)}")
+    try:
+        html, final_url = await s.images.fetch_page(url)
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"❌ Fetch failed: {esc(str(exc)[:200])}")
+        await reply(update, "\n".join(lines))
+        return
+    lines.append(f"Final URL: {esc(truncate(final_url, 100))} · {len(html):,} bytes of HTML")
+    lines.append(f"Labels itself adult: {'yes' if html and page_is_adult(html) else 'no'}")
+    ruled = apply_rules(html, final_url, rules_for(final_url, await s.jobs.site_rules.all())) if html else []
+    generic = find_videos(html, final_url, embed_supported=lambda u: supported_extractor(u) is not None) if html else []
+    if ruled:
+        lines.append(f"\n<b>Site-rule matches ({len(ruled)})</b>")
+        lines += [f"• {c.kind} {c.height or '?'}p · <code>{esc(truncate(c.url, 150))}</code>" for c in ruled[:10]]
+    lines.append(f"\n<b>Generic fallback candidates ({len(generic)})</b>")
+    lines += [
+        f"• {c.kind} {c.height or '?'}p ({c.source}) · <code>{esc(truncate(c.url, 150))}</code>" for c in generic[:10]
+    ] or ["none: the stream is probably built by scripts, or DRM-protected"]
+    lines.append(
+        "\nIf the stream isn't listed, look for it in the attached HTML and add a rule with "
+        "<code>/siterule add DOMAIN REGEX</code>."
+    )
+    await reply(update, "\n".join(lines))
+    if html:
+        await update.effective_message.reply_document(
+            InputFile(io.BytesIO(html.encode()), filename=f"{normalize_domain(final_url) or 'page'}.html"),
+            caption="Page HTML as the server received it",
+        )
+
+
+@command(
+    "siterule",
+    "admin",
+    "Custom stream-extraction rules for sites without built-in support",
+    "/siterule list | add <domain> <regex> | remove <domain> [n] | test <url>",
+    admin=True,
+)
+async def siterule(update: Update, context: Ctx, user: User) -> None:
+    rules = svc(context).jobs.site_rules
+    args = context.args or []
+    action = args[0].lower() if args else "list"
+    if action == "list":
+        data = await rules.all()
+        if not data:
+            await reply(update, "No site rules yet.\n" + usage("siterule"))
+            return
+        lines = ["🧩 <b>Site rules</b>"]
+        for domain, patterns in sorted(data.items()):
+            lines += [f"<b>{esc(domain)}</b>"] + [f"  {i}. <code>{esc(p)}</code>" for i, p in enumerate(patterns, 1)]
+        await reply(update, "\n".join(lines))
+    elif action == "add" and len(args) >= 3:
+        domain = normalize_domain(args[1])
+        pattern = " ".join(args[2:])
+        if not domain:
+            await reply(update, "That isn't a valid domain.")
+            return
+        try:
+            n = await rules.add(domain, pattern)
+        except ValueError as exc:
+            await reply(update, f"⚠️ {esc(exc)}")
+            return
+        await reply(
+            update,
+            f"🧩 Rule {n} added for <b>{esc(domain)}</b>. Check it with "
+            f"<code>/siterule test https://{esc(domain)}/…</code>",
+        )
+    elif action == "remove" and len(args) >= 2:
+        domain = normalize_domain(args[1]) or ""
+        index = int(args[2]) if len(args) > 2 and args[2].isdigit() else None
+        n = await rules.remove(domain, index)
+        await reply(update, f"🗑 Removed {n} rule{'s' if n != 1 else ''}." if n else "No matching rule.")
+    elif action == "test" and len(args) >= 2:
+        url = args[1]
+        s = svc(context)
+        try:
+            html, final_url = await s.images.fetch_page(url)
+        except Exception as exc:  # noqa: BLE001
+            await reply(update, f"❌ Fetch failed: {esc(str(exc)[:200])}")
+            return
+        found = await rules.candidates(html, final_url)
+        if not found:
+            await reply(update, "No rule matched on that page.")
+            return
+        await reply(
+            update,
+            f"✅ {len(found)} stream{'s' if len(found) != 1 else ''} matched:\n"
+            + "\n".join(
+                f"• {c.kind} {c.height or '?'}p · <code>{esc(truncate(c.url, 150))}</code>" for c in found[:10]
+            ),
+        )
+    else:
+        await reply(
+            update,
+            usage("siterule") + '\nExample: <code>/siterule add example.com "(https?://[^"]+\\.m3u8[^"]*)"</code>',
+        )

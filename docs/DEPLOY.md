@@ -152,6 +152,7 @@ Send `/backup` in the bot to receive a copy of the SQLite database. On the serve
 | "This media isn't public (it needs a login)" | Export **your own** browser cookies (Netscape `cookies.txt`, e.g. with the "Get cookies.txt LOCALLY" extension) and reply to the file with `/cookies`. |
 | "The site is rate-limiting this server (429)" / YouTube asks to "confirm you're not a bot" | Common on cloud/datacenter IPs. Add your cookies with `/cookies`, lower `MAX_CONCURRENT_JOBS`, or set `PROXY` to a residential/home connection. |
 | "The server's network or proxy blocked the connection" | The server's firewall/proxy doesn't allow that site. Check outbound HTTPS from the server. |
+| "No downloadable video stream was found on this page" | Run `/pagedebug <url>`. If the stream URL is in the attached HTML, add `/siterule add <domain> <regex>` and check it with `/siterule test <url>`. |
 | "DRM-protected streaming service" | Expected. The bot never bypasses DRM (Netflix, Prime Video, Disney+ and similar). |
 | Files over 50 MB arrive in parts | Expected without a local Bot API server, links or S3. See [Big files](#big-files). |
 | `ffmpeg isn't installed` | Docker already includes it; otherwise run `apt install ffmpeg`. |

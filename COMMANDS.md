@@ -1,6 +1,6 @@
 # Command reference
 
-164 commands: 129 for users and 35 for admins.
+166 commands: 129 for users and 37 for admins.
 This file is generated from the command registry; run `python -m scripts.gen_commands` after changes.
 
 Tips: paste any link to get a preview with buttons. Media tools work when you reply to a file, or send
@@ -200,7 +200,7 @@ the file with the command as its caption.
 | `/hash` | MD5 / SHA-1 / SHA-256 of a file | `/hash (reply to a file)` |
 | `/urls` | Extract every link from a message (reply to it) | `/urls (reply to a message)` |
 
-## 🛡 Admin (35)
+## 🛡 Admin (37)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
@@ -210,6 +210,8 @@ the file with the command as its caption.
 | `/blockedsites` | Domains that are blocked | `/blockedsites` |
 | `/cookies` | Use your own logged-in cookies for sites that need a login (reply to cookies.txt) | `/cookies [clear]  (reply to a cookies.txt file)` |
 | `/sitecheck` | Test right now which major platforms this server can read | `/sitecheck [url …]` |
+| `/pagedebug` | Show what the bot can find on a page (streams, extractor, adult label) + its HTML | `/pagedebug <url>` |
+| `/siterule` | Custom stream-extraction rules for sites without built-in support | `/siterule list \| add <domain> <regex> \| remove <domain> [n] \| test <url>` |
 | `/admin` | Admin panel | `/admin` |
 | `/users` | List users (30 per page) | `/users [page]` |
 | `/user` | Details about one user | `/user <id\|@username>` |

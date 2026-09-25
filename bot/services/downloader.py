@@ -505,7 +505,7 @@ def friendly_error(exc: BaseException) -> str:
     lowered = msg.lower()
     if "unsupported url" in lowered:
         return "This link isn't a supported media page. Try /images for pictures on any web page."
-    if "drm" in lowered:
+    if "drm protected" in lowered or "drm-protected" in lowered or "has drm" in lowered or "uses drm" in lowered:
         return "This video is DRM-protected and can't be downloaded."
     if "age restricted" in lowered or "age-restricted" in lowered or "confirm your age" in lowered:
         return "This media is age-restricted. The site needs a logged-in adult account (admins: /cookies)."

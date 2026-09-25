@@ -3,7 +3,7 @@
 [![CI](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml/badge.svg)](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml)
 
 A **private** Telegram bot, written in Python, that downloads **public videos, audio and images from almost any
-website**, in any available format or quality. It has **164 commands**, 129 for users and 35 for admins, plus
+website**, in any available format or quality. It has **166 commands**, 129 for users and 37 for admins, plus
 button menus throughout.
 
 - **Videos and audio from 1,800+ sites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp): every resolution from
@@ -51,6 +51,11 @@ inside the player's scripts, and embedded players that yt-dlp supports. It then 
 finds, sending the page as Referer. This works for most sites that serve an unencrypted stream. It can't work for
 DRM-encrypted streams, or for sites that build the stream URL with obfuscated code at play time.
 
+**Integrating a new site without code changes:** an admin sends `/pagedebug <url>` to see what the bot finds on
+the page (extractor, adult label, every stream candidate), along with the page's HTML. If the stream is in the HTML
+but not recognised, `/siterule add <domain> <regex>` adds a pattern whose first capture group is the stream URL.
+Rules are tried before the generic scan; `/siterule test <url>` checks one.
+
 Admins can check live from the server which platforms currently work with **`/sitecheck`**. It tests the sample
 links yt-dlp maintains for each platform. They can also block any domain with `/blocksite`. When a site changes,
 `/updateytdlp` followed by `/restart` usually fixes it. YouTube needs a JavaScript runtime and hardened sites need
@@ -91,7 +96,7 @@ See **[docs/DEPLOY.md](docs/DEPLOY.md)** for step-by-step instructions, 2 GB upl
 | `/watch CHANNEL_URL` | New uploads sent to you automatically |
 | `/schedule 18:30 URL` | The download starts at 18:30 your time |
 
-The full list of all 164 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
+The full list of all 166 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
 
 ## Configuration
 
@@ -139,7 +144,7 @@ deploy/             systemd unit, Ubuntu installer, AWS CloudFormation + scripts
 
 ```bash
 pip install -r requirements-dev.txt     # plus ffmpeg on your PATH
-python -m pytest -q                     # 124 tests
+python -m pytest -q                     # 128 tests
 ruff check . && ruff format --check .
 python -m scripts.gen_commands          # regenerate COMMANDS.md after changing commands
 python -m scripts.gen_commands --botfather   # command list to paste into @BotFather
