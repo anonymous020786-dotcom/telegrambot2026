@@ -34,7 +34,15 @@ from ..config import Settings
 from ..db import Database, User
 from ..utils import cache_key, domain_of, esc, human_duration, human_size, progress_bar, truncate
 from .delivery import Delivery, make_zip
-from .downloader import AdultBlocked, Cancelled, Downloader, Preset, friendly_error, supported_extractor
+from .downloader import (
+    AdultBlocked,
+    Cancelled,
+    Downloader,
+    Preset,
+    friendly_error,
+    is_transient,
+    supported_extractor,
+)
 from .images import FoundImage, ImageService
 from .pagevideo import find_videos, page_is_adult
 from .policy import ADULT_BLOCKED_MESSAGE, Policy
@@ -83,6 +91,8 @@ class Job:
     resumed: bool = False  # re-queued after a bot restart
     file_id: str | None = None  # Telegram file of a single-file result (lets inline mode post it anywhere)
     file_kind: str | None = None
+    attempt: int = 0  # automatic retries used so far
+    not_before: float = 0.0  # a retry waits in the queue until this time
 
     @property
     def fraction(self) -> float:
@@ -94,9 +104,10 @@ class Job:
 
 
 def progress_text(job: Job) -> str:
-    icon = {"queued": "🕒", "downloading": "⬇️", "processing": "⚙️", "uploading": "⬆️"}.get(job.phase, "⏳")
+    icon = {"queued": "🕒", "downloading": "⬇️", "processing": "⚙️", "uploading": "⬆️", "retry": "🔁"}.get(job.phase, "⏳")
     phase = {
         "queued": "Queued",
+        "retry": "Waiting to retry",
         "downloading": "Downloading",
         "processing": "Processing",
         "uploading": "Uploading",
@@ -122,6 +133,11 @@ def progress_text(job: Job) -> str:
         lines.append(detail)
     elif job.phase == "processing":
         lines.append("Merging / converting with ffmpeg…")
+    elif job.phase == "retry":
+        wait = max(0, round(job.not_before - time.time()))
+        lines.append(f"Temporary problem, trying again in {human_duration(wait)} (retry {job.attempt})")
+        if job.error:
+            lines.append(f"<i>{esc(job.error)}</i>")
     lines.append(f"<i>Job {job.id}</i>")
     return "\n".join(lines)
 
@@ -132,6 +148,14 @@ def cancel_keyboard(job: Job) -> InlineKeyboardMarkup:
 
 class QuotaExceeded(Exception):
     pass
+
+
+class DuplicateJob(Exception):
+    """The same download is already queued or running for this user."""
+
+    def __init__(self, existing: Job):
+        super().__init__(existing.id)
+        self.existing = existing
 
 
 class PolicyBlocked(Exception):
@@ -340,10 +364,20 @@ class JobManager:
     async def submit(self, job: Job, user: User) -> Job:
         if reason := await self.policy.refusal(job.url):
             raise PolicyBlocked(reason)
+        if existing := self.find_duplicate(job):
+            raise DuplicateJob(existing)
         left = await self.remaining_quota(user)
         if left is not None and left <= 0:
             raise QuotaExceeded()
         return await self._enqueue(job, user)
+
+    def find_duplicate(self, job: Job) -> Job | None:
+        """An active job of the same user that would download exactly the same thing."""
+        wanted = (job.url, job.kind, job.preset.to_dict(), job.options)
+        for other in self.user_jobs(job.user_id):
+            if other.id != job.id and (other.url, other.kind, other.preset.to_dict(), other.options) == wanted:
+                return other
+        return None
 
     async def _enqueue(self, job: Job, user: User) -> Job:
         self.jobs[job.id] = job
@@ -426,7 +460,9 @@ class JobManager:
                 # Stale entries (moved to front, cancelled, already started) are skipped by status.
                 if not job or job.status != "queued":
                     continue
-                if self.running_count(job.user_id) >= self.settings.per_user_concurrent_jobs:
+                if job.not_before > time.time() or (
+                    self.running_count(job.user_id) >= self.settings.per_user_concurrent_jobs
+                ):
                     deferred.append((prio, seq, jid))
                     continue
                 chosen = job
@@ -451,11 +487,16 @@ class JobManager:
                 job.error = "Internal error"
                 await self._finish_message(job, "❌ Internal error", retry=True)
             finally:
-                job.finished_at = time.time()
+                if job.status == "queued":
+                    # A transient failure: back in the queue (after its work dir was cleaned up), waiting
+                    # until job.not_before.
+                    heapq.heappush(self._heap, (job.priority, next(self._seq), job.id))
+                else:
+                    job.finished_at = time.time()
+                    self._forget_later(job)
+                    if not self._stopping:  # a job interrupted by shutdown stays pending for restore()
+                        self._forget_pending(job)
                 self._wake.set()
-                self._forget_later(job)
-                if not self._stopping:  # a job interrupted by shutdown stays pending for restore()
-                    self._forget_pending(job)
 
     def _forget_later(self, job: Job) -> None:
         async def forget() -> None:
@@ -488,21 +529,30 @@ class JobManager:
 
         return hook
 
+    async def _show_progress(self, job: Job) -> None:
+        if not (job.message_id and self.bot):
+            return
+        try:
+            await self.bot.edit_message_text(
+                progress_text(job),
+                job.chat_id,
+                job.message_id,
+                parse_mode=ParseMode.HTML,
+                reply_markup=cancel_keyboard(job),
+            )
+        except BadRequest:
+            pass
+        except TelegramError as exc:
+            log.debug("progress edit failed: %s", exc)
+
     async def _progress_loop(self, job: Job) -> None:
         last = ""
         while job.status == "running":
             await asyncio.sleep(PROGRESS_INTERVAL)
             text = progress_text(job)
-            if text != last and job.message_id and self.bot:
+            if text != last:
                 last = text
-                try:
-                    await self.bot.edit_message_text(
-                        text, job.chat_id, job.message_id, parse_mode=ParseMode.HTML, reply_markup=cancel_keyboard(job)
-                    )
-                except BadRequest:
-                    pass
-                except TelegramError as exc:
-                    log.debug("progress edit failed: %s", exc)
+                await self._show_progress(job)
 
     async def _finish_message(self, job: Job, text: str, retry: bool = False, delete: bool = False) -> None:
         if not (self.bot and job.message_id):
@@ -536,6 +586,7 @@ class JobManager:
         assert self.bot is not None
         job.started_at = time.time()
         job.phase = "downloading"
+        job.error = None
         user = await self.db.ensure_user(job.user_id)
         reporter = asyncio.create_task(self._progress_loop(job))
         out_dir = self.job_dir(job)
@@ -567,17 +618,19 @@ class JobManager:
             job.error = ADULT_BLOCKED_MESSAGE
             await self._finish_message(job, "🔞 Not downloaded")
         except DownloadError as exc:
-            job.status = "failed"
-            job.error = friendly_error(exc)
-            await self._finish_message(job, "❌ Download failed", retry=True)
+            if not await self._retry_later(job, exc):
+                job.status = "failed"
+                job.error = friendly_error(exc)
+                await self._finish_message(job, "❌ Download failed", retry=True)
         except Exception as exc:
-            log.exception("job %s failed", job.id)
-            job.status = "failed"
-            job.error = friendly_error(exc)
-            await self._finish_message(job, "❌ Failed", retry=True)
+            if not await self._retry_later(job, exc):
+                log.exception("job %s failed", job.id)
+                job.status = "failed"
+                job.error = friendly_error(exc)
+                await self._finish_message(job, "❌ Failed", retry=True)
         finally:
             reporter.cancel()
-            if job.options.get("inline_message_id"):
+            if job.options.get("inline_message_id") and job.status != "queued":
                 await self._update_inline(job, user)
             if job.status in ("failed", "cancelled"):
                 await self.db.add_history(
@@ -591,6 +644,19 @@ class JobManager:
                 )
             if not used_link:
                 shutil.rmtree(out_dir, ignore_errors=True)
+
+    async def _retry_later(self, job: Job, exc: Exception) -> bool:
+        """Schedule another attempt after a transient failure. The worker re-queues it once _run is done."""
+        if job.cancelled or job.attempt >= self.settings.transient_retries or not is_transient(exc):
+            return False
+        job.attempt += 1
+        delay = self.settings.retry_delay_seconds * 4 ** (job.attempt - 1)
+        log.info("job %s: transient failure (%s); retry %d in %.0fs", job.id, exc, job.attempt, delay)
+        job.not_before = time.time() + delay
+        job.status, job.phase, job.error = "queued", "retry", friendly_error(exc)
+        job.downloaded, job.total, job.speed, job.eta = 0, None, None, None
+        await self._show_progress(job)
+        return True
 
     async def _update_inline(self, job: Job, user: User) -> None:
         """Replace an inline-mode placeholder ("⏳ Downloading…") with the file, or say what happened."""

@@ -25,6 +25,8 @@ button menus throughout.
 - **Download queue**: parallel workers with a per-user limit and daily quotas, pause and resume, move to front,
   retry, and instant re-sending of files already downloaded (cached by Telegram file ID). The queue survives
   restarts, updates and crashes: waiting and interrupted downloads resume automatically, and pauses are kept.
+  Temporary failures (rate limits, server errors, network drops) are retried automatically with backoff, and the
+  same download is never queued twice.
 - **Library**: history, favorites, search, one-tap re-download, CSV export.
 - **Subscriptions**: watch a channel or playlist and get new uploads automatically. You can also **schedule**
   downloads ("in 2h", "18:30", "2026-10-01 08:00", in your time zone).
@@ -114,6 +116,7 @@ All settings are environment variables (see [.env.example](.env.example)). The m
 | `PUBLIC_MODE` | `false` | Let anyone use the bot |
 | `DAILY_LIMIT` | `200` | Downloads per user per day (`0` = unlimited) |
 | `MAX_CONCURRENT_JOBS` / `PER_USER_CONCURRENT_JOBS` | `3` / `2` | Parallel downloads |
+| `TRANSIENT_RETRIES` / `RETRY_DELAY_SECONDS` | `2` / `15` | Automatic retries after HTTP 429/5xx or network errors; each wait is 4× the previous (15 s, 60 s) |
 | `MAX_DOWNLOAD_MB` | `4000` | Refuse larger source files |
 | `BOT_API_BASE_URL` | – | Self-hosted Bot API server (2 GB uploads) |
 | `LINK_SERVER_ENABLED` / `LINK_BASE_URL` | `false` / – | Expiring download links for big files |

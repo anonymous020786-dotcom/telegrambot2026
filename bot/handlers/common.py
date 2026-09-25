@@ -17,7 +17,7 @@ from ..context import Services
 from ..db import User
 from ..registry import REGISTRY, Command
 from ..services.downloader import Preset
-from ..services.jobs import Job, PolicyBlocked, QuotaExceeded
+from ..services.jobs import DuplicateJob, Job, PolicyBlocked, QuotaExceeded
 from ..utils import esc, extract_urls, is_http_url
 
 log = logging.getLogger(__name__)
@@ -121,6 +121,13 @@ async def enqueue(
         await s.jobs.submit(job, user)
     except PolicyBlocked as exc:
         await reply(update, esc(str(exc)))
+        return None
+    except DuplicateJob as dup:
+        existing = dup.existing
+        where = (
+            "downloading now" if existing.status == "running" else f"#{s.jobs.position(existing) or '–'} in the queue"
+        )
+        await reply(update, f"⏳ Already on it: {existing.describe()} ({where}). /queue shows everything.")
         return None
     except QuotaExceeded:
         limit = user.daily_limit if user.daily_limit is not None else s.settings.daily_limit
