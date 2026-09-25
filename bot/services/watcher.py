@@ -13,7 +13,7 @@ from telegram.ext import Application, ContextTypes
 
 from ..utils import esc, truncate
 from .downloader import Preset
-from .jobs import Job, QuotaExceeded
+from .jobs import Job, PolicyBlocked, QuotaExceeded
 
 log = logging.getLogger(__name__)
 MAX_NEW_PER_CHECK = 5
@@ -43,6 +43,8 @@ async def check_watch(app: Application, row) -> int:
         try:
             await svc.jobs.submit(job, user)
             queued += 1
+        except PolicyBlocked:
+            continue
         except QuotaExceeded:
             break
     try:
@@ -86,6 +88,8 @@ async def run_schedule(context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     try:
         await svc.jobs.submit(job, user)
+    except PolicyBlocked as exc:
+        await context.bot.send_message(row["chat_id"], f"⏰ Scheduled download skipped. {exc}")
     except QuotaExceeded:
         await context.bot.send_message(row["chat_id"], "⏰ Scheduled download skipped: daily limit reached.")
 

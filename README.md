@@ -3,7 +3,7 @@
 [![CI](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml/badge.svg)](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml)
 
 A **private** Telegram bot, written in Python, that downloads **public videos, audio and images from almost any
-website**, in any available format or quality. It has **157 commands**, 128 for users and 29 for admins, plus
+website**, in any available format or quality. It has **166 commands**, 129 for users and 37 for admins, plus
 button menus throughout.
 
 - **Videos and audio from 1,800+ sites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp): every resolution from
@@ -33,6 +33,33 @@ button menus throughout.
 
 > It only downloads **publicly accessible** media. It does not bypass DRM, paywalls or logins. Respect copyright and
 > each website's terms of service.
+
+## Supported sites and content rules
+
+| Kind of site | Works? | Notes |
+| --- | --- | --- |
+| **Social media**: YouTube (incl. Shorts), Instagram (reels, posts, stories you can see), TikTok, X/Twitter, Facebook, Reddit, Threads*, Pinterest, Snapchat Spotlight, Tumblr, Bluesky, LinkedIn, Twitch, Kick, VK, Weibo, Bilibili… | ✅ | Dedicated yt-dlp extractors. Photo and carousel posts are fetched with gallery-dl automatically. Sites that require a login even for public posts work once an admin adds their **own** cookies with `/cookies`. |
+| **Video and audio platforms**: Vimeo, Dailymotion, SoundCloud, Bandcamp, Rumble, Odysee, archive.org, news sites, direct media links, pages with embedded players | ✅ | 1,800+ sites. Anything else with an embedded video or a direct link goes through the generic extractor. |
+| **Adult sites** hosting legal content | ⚙️ Opt-in | **61 sites with dedicated extractors** (xHamster, PornHub, XVideos, XNXX, YouPorn, RedTube, SpankBang, Eporner, Beeg, TNAFlix, ThisVid, RedGifs, Chaturbate, Stripchat…; `/sites adult` lists them all). Other sites usually work through the page-video fallback (below). Off by default: an admin enables it with `/adult optin` (or `ADULT_CONTENT=optin`), then each user confirms they are 18+ with `/setadult`. Media rated 18+ by the site, and pages that label themselves adult (RTA tag), are refused for everyone else, including the preview thumbnail. |
+| **Subscription OTT and streaming** (Netflix, Prime Video, Disney+, Hotstar Premium, Max, Hulu, Apple TV+, Spotify…) | ❌ | These services encrypt their streams with DRM. The bot **does not bypass DRM** and tells the user why. DRM-free clips, trailers and free catch-up TV that yt-dlp supports do work. |
+
+\* Threads is handled by gallery-dl rather than yt-dlp.
+
+**Any other website:** when yt-dlp has no extractor for a site, the bot reads the page itself. It looks for
+`<video>`/`<source>` tags, `og:video`, JSON-LD `VideoObject`, links to MP4/WebM/HLS/DASH files, stream URLs
+inside the player's scripts, and embedded players that yt-dlp supports. It then downloads the best stream it
+finds, sending the page as Referer. This works for most sites that serve an unencrypted stream. It can't work for
+DRM-encrypted streams, or for sites that build the stream URL with obfuscated code at play time.
+
+**Integrating a new site without code changes:** an admin sends `/pagedebug <url>` to see what the bot finds on
+the page (extractor, adult label, every stream candidate), along with the page's HTML. If the stream is in the HTML
+but not recognised, `/siterule add <domain> <regex>` adds a pattern whose first capture group is the stream URL.
+Rules are tried before the generic scan; `/siterule test <url>` checks one.
+
+Admins can check live from the server which platforms currently work with **`/sitecheck`**. It tests the sample
+links yt-dlp maintains for each platform. They can also block any domain with `/blocksite`. When a site changes,
+`/updateytdlp` followed by `/restart` usually fixes it. YouTube needs a JavaScript runtime and hardened sites need
+browser impersonation; both are installed automatically (`yt-dlp[default,curl-cffi,deno]`).
 
 ## Quick start (Docker)
 
@@ -69,7 +96,7 @@ See **[docs/DEPLOY.md](docs/DEPLOY.md)** for step-by-step instructions, 2 GB upl
 | `/watch CHANNEL_URL` | New uploads sent to you automatically |
 | `/schedule 18:30 URL` | The download starts at 18:30 your time |
 
-The full list of all 157 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
+The full list of all 166 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
 
 ## Configuration
 
@@ -88,7 +115,9 @@ All settings are environment variables (see [.env.example](.env.example)). The m
 | `LINK_SERVER_ENABLED` / `LINK_BASE_URL` | `false` / – | Expiring download links for big files |
 | `S3_BUCKET` / `S3_REGION` | – | S3 delivery for big files |
 | `PROXY` | – | HTTP/SOCKS proxy for downloads |
-| `COOKIES_FILE` | – | Your own browser cookies (Netscape format), for media your account can see |
+| `COOKIES_FILE` | – | Your own browser cookies (Netscape format), for media your account can see (or upload with `/cookies`) |
+| `ADULT_CONTENT` | `off` | `off`, or `optin`, where adults confirm with `/setadult` |
+| `BLOCKED_DOMAINS` | – | Never download from these domains |
 
 ## Architecture
 
@@ -115,7 +144,7 @@ deploy/             systemd unit, Ubuntu installer, AWS CloudFormation + scripts
 
 ```bash
 pip install -r requirements-dev.txt     # plus ffmpeg on your PATH
-python -m pytest -q                     # 75 tests
+python -m pytest -q                     # 128 tests
 ruff check . && ruff format --check .
 python -m scripts.gen_commands          # regenerate COMMANDS.md after changing commands
 python -m scripts.gen_commands --botfather   # command list to paste into @BotFather

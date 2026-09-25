@@ -15,6 +15,7 @@ from .services.downloader import Downloader, MediaInfo
 from .services.images import ImageService
 from .services.jobs import JobManager
 from .services.linkserver import LinkServer
+from .services.policy import Policy
 
 
 class TokenStore:
@@ -56,6 +57,7 @@ class Services:
     delivery: Delivery
     jobs: JobManager
     links: LinkServer | None = None
+    policy: Policy | None = None
     tokens: TokenStore = field(default_factory=TokenStore)
     probe_cache: dict[str, tuple[float, MediaInfo]] = field(default_factory=dict)
     last_command: dict[int, float] = field(default_factory=dict)

@@ -1,6 +1,6 @@
 # Command reference
 
-157 commands: 128 for users and 29 for admins.
+166 commands: 129 for users and 37 for admins.
 This file is generated from the command registry; run `python -m scripts.gen_commands` after changes.
 
 Tips: paste any link to get a preview with buttons. Media tools work when you reply to a file, or send
@@ -142,7 +142,7 @@ the file with the command as its caption.
 | `/clearhistory` | Delete your history (favorites kept unless 'all') | `/clearhistory [all]` |
 | `/exporthistory` | Download your history as a CSV file | `/exporthistory` |
 
-## ⚙️ Settings (16)
+## ⚙️ Settings (17)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
@@ -162,6 +162,7 @@ the file with the command as its caption.
 | `/settz` | Your time zone (for schedules and dates) | `/settz <Europe/Berlin\|Asia/Kolkata\|…>` |
 | `/setname` | File name template (yt-dlp fields) | `/setname <template>  e.g. %(uploader)s - %(title)s` |
 | `/reset` | Restore all settings to defaults | `/reset` |
+| `/setadult` | Allow 18+ media for yourself (needs admin permission and age confirmation) | `/setadult [on\|off]` |
 
 ## 👤 Account (8)
 
@@ -199,10 +200,18 @@ the file with the command as its caption.
 | `/hash` | MD5 / SHA-1 / SHA-256 of a file | `/hash (reply to a file)` |
 | `/urls` | Extract every link from a message (reply to it) | `/urls (reply to a message)` |
 
-## 🛡 Admin (29)
+## 🛡 Admin (37)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
+| `/adult` | Adult content for the whole bot: off, or opt-in per user | `/adult <off\|optin>` |
+| `/blocksite` | Block all downloads from a domain | `/blocksite <domain>` |
+| `/unblocksite` | Remove a domain from the blocklist | `/unblocksite <domain>` |
+| `/blockedsites` | Domains that are blocked | `/blockedsites` |
+| `/cookies` | Use your own logged-in cookies for sites that need a login (reply to cookies.txt) | `/cookies [clear]  (reply to a cookies.txt file)` |
+| `/sitecheck` | Test right now which major platforms this server can read | `/sitecheck [url …]` |
+| `/pagedebug` | Show what the bot can find on a page (streams, extractor, adult label) + its HTML | `/pagedebug <url>` |
+| `/siterule` | Custom stream-extraction rules for sites without built-in support | `/siterule list \| add <domain> <regex> \| remove <domain> [n] \| test <url>` |
 | `/admin` | Admin panel | `/admin` |
 | `/users` | List users (30 per page) | `/users [page]` |
 | `/user` | Details about one user | `/user <id\|@username>` |

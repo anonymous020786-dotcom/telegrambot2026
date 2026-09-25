@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -24,8 +25,41 @@ CONTAINERS = ("mp4", "mkv", "webm")
 TEMP_SUFFIXES = (".part", ".ytdl", ".temp", ".frag")
 
 
+class YtdlpLogger:
+    """Routes yt-dlp's console output into the bot's log instead of stderr."""
+
+    def debug(self, msg: str) -> None:
+        if not msg.startswith("[debug] "):
+            log.debug(msg)
+
+    def info(self, msg: str) -> None:
+        log.debug(msg)
+
+    def warning(self, msg: str) -> None:
+        log.info("yt-dlp: %s", msg)
+
+    def error(self, msg: str) -> None:
+        log.warning("yt-dlp: %s", friendly_error(Exception(msg)))
+
+
+YTDLP_LOGGER = YtdlpLogger()
+
+
 class Cancelled(Exception):
     """Raised when the user cancels a download."""
+
+
+class AdultBlocked(Exception):
+    """Raised when media is rated 18+ and adult content isn't enabled for the user."""
+
+
+def js_runtime_opts() -> dict[str, Any]:
+    """Point yt-dlp at the Deno binary installed by the `yt-dlp[deno]` extra (needed for YouTube)."""
+    import shutil
+    import sys
+
+    deno = shutil.which("deno") or str(Path(sys.executable).with_name("deno"))
+    return {"js_runtimes": {"deno": {"path": deno}}} if Path(deno).exists() else {}
 
 
 @dataclass
@@ -220,9 +254,15 @@ def build_options(
     settings: Settings,
     out_dir: Path,
     hook: Callable[[dict[str, Any]], None] | None = None,
+    allow_adult: bool = True,
+    referer: str | None = None,
 ) -> dict[str, Any]:
+    headers = {"User-Agent": settings.user_agent}
+    if referer:
+        headers["Referer"] = referer  # hotlink-protected streams found by the page fallback
     opts: dict[str, Any] = {
         "quiet": True,
+        "logger": YTDLP_LOGGER,
         "no_warnings": True,
         "noprogress": True,
         "windowsfilenames": True,
@@ -242,12 +282,15 @@ def build_options(
         "ignoreerrors": "only_download" if preset.playlist else False,
         "overwrites": True,
         "postprocessors": [],
-        "http_headers": {"User-Agent": settings.user_agent},
+        "http_headers": headers,
     }
     if settings.proxy:
         opts["proxy"] = settings.proxy
-    if settings.cookies_file and Path(settings.cookies_file).is_file():
-        opts["cookiefile"] = str(settings.cookies_file)
+    if cookies := settings.cookies_path():
+        opts["cookiefile"] = str(cookies)
+    if not allow_adult:
+        # yt-dlp skips media the site rates above this age (adult sites report 18).
+        opts["age_limit"] = 17
     if preset.playlist:
         opts["playlist_items"] = preset.playlist_items or f"1-{settings.max_playlist_items}"
     if hook:
@@ -335,6 +378,7 @@ class Downloader:
     def _base_opts(self) -> dict[str, Any]:
         opts: dict[str, Any] = {
             "quiet": True,
+            "logger": YTDLP_LOGGER,
             "no_warnings": True,
             "skip_download": True,
             "socket_timeout": 30,
@@ -342,9 +386,9 @@ class Downloader:
         }
         if self.settings.proxy:
             opts["proxy"] = self.settings.proxy
-        if self.settings.cookies_file and Path(self.settings.cookies_file).is_file():
-            opts["cookiefile"] = str(self.settings.cookies_file)
-        return opts
+        if cookies := self.settings.cookies_path():
+            opts["cookiefile"] = str(cookies)
+        return {**opts, **js_runtime_opts()}
 
     def _extract(self, url: str, **extra: Any) -> dict[str, Any]:
         with yt_dlp.YoutubeDL({**self._base_opts(), **extra}) as ydl:
@@ -395,10 +439,16 @@ class Downloader:
         return out
 
     def download_sync(
-        self, url: str, preset: Preset, out_dir: Path, hook: Callable[[dict[str, Any]], None] | None = None
+        self,
+        url: str,
+        preset: Preset,
+        out_dir: Path,
+        hook: Callable[[dict[str, Any]], None] | None = None,
+        allow_adult: bool = True,
+        referer: str | None = None,
     ) -> tuple[dict[str, Any] | None, list[Path]]:
         out_dir.mkdir(parents=True, exist_ok=True)
-        opts = build_options(preset, self.settings, out_dir, hook)
+        opts = {**build_options(preset, self.settings, out_dir, hook, allow_adult, referer), **js_runtime_opts()}
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -407,15 +457,23 @@ class Downloader:
             raise Cancelled() from exc
         files = collect_outputs(out_dir, preset)
         if not files:
+            if not allow_adult and info and int(info.get("age_limit") or 0) >= 18:
+                raise AdultBlocked()
             if info and info.get("is_live"):
                 raise DownloadError("Live streams can't be downloaded while they are live")
             raise DownloadError("Nothing was downloaded (the format may be unavailable or too large)")
         return info, files
 
     async def download(
-        self, url: str, preset: Preset, out_dir: Path, hook: Callable[[dict[str, Any]], None] | None = None
+        self,
+        url: str,
+        preset: Preset,
+        out_dir: Path,
+        hook: Callable[[dict[str, Any]], None] | None = None,
+        allow_adult: bool = True,
+        referer: str | None = None,
     ) -> tuple[dict[str, Any] | None, list[Path]]:
-        return await asyncio.to_thread(self.download_sync, url, preset, out_dir, hook)
+        return await asyncio.to_thread(self.download_sync, url, preset, out_dir, hook, allow_adult, referer)
 
 
 def supported_extractor(url: str) -> str | None:
@@ -441,21 +499,51 @@ def extractor_names() -> list[str]:
 
 
 def friendly_error(exc: BaseException) -> str:
-    msg = str(exc)
-    msg = msg.replace("ERROR: ", "").split("\n")[0]
+    msg = str(exc).replace("ERROR: ", "").split("\n")[0]
+    # Drop yt-dlp's boilerplate tails ("; please report this issue…", "(caused by …)").
+    msg = re.split(r";\s*please report this issue|\s*\(caused by ", msg)[0].strip()
     lowered = msg.lower()
     if "unsupported url" in lowered:
         return "This link isn't a supported media page. Try /images for pictures on any web page."
-    if "drm" in lowered:
+    if "drm protected" in lowered or "drm-protected" in lowered or "has drm" in lowered or "uses drm" in lowered:
         return "This video is DRM-protected and can't be downloaded."
-    if "private" in lowered or "login" in lowered or "sign in" in lowered:
-        return "This media isn't public (it needs a login)."
+    if "age restricted" in lowered or "age-restricted" in lowered or "confirm your age" in lowered:
+        return "This media is age-restricted. The site needs a logged-in adult account (admins: /cookies)."
+    if "private" in lowered or "login" in lowered or "sign in" in lowered or "log in" in lowered:
+        return "This media isn't public (it needs a login). Admins can add their own cookies with /cookies."
     if "file is larger than max-filesize" in lowered or "too large" in lowered:
         return "The file is larger than the bot's maximum download size."
     if "requested format is not available" in lowered:
         return "That quality/format isn't available. Try /formats to see what exists."
+    if "not available in your country" in lowered or ("geo" in lowered and "restrict" in lowered):
+        return "This media isn't available in the server's country. A PROXY in another region may help."
+    if "unable to connect to proxy" in lowered or "tunnel connection failed" in lowered or "connect tunnel" in lowered:
+        return "The server's network or proxy blocked the connection to this site."
+    if "timed out" in lowered or "name or service not known" in lowered or "connection refused" in lowered:
+        return "Couldn't reach the site (network error). Try again later."
+    if "http error 429" in lowered or "too many requests" in lowered:
+        return "The site is rate-limiting this server (429). Try again later, or use cookies/a proxy."
     if "http error 404" in lowered:
         return "The page or media wasn't found (404)."
     if "http error 403" in lowered:
         return "The site refused the request (403). It may block downloads or need cookies."
     return msg[:300] or exc.__class__.__name__
+
+
+_ADULT_CACHE: list[str] | None = None
+
+
+def adult_extractors() -> list[str]:
+    """yt-dlp extractors for adult sites (their sample videos are rated 18+)."""
+    global _ADULT_CACHE
+    if _ADULT_CACHE is None:
+        names = set()
+        for ie in yt_dlp.extractor.gen_extractor_classes():
+            if not ie.working() or ie.ie_key() == "Generic":
+                continue
+            ages = [t.get("info_dict", {}).get("age_limit") for t in ie.get_testcases(include_onlymatching=False)]
+            rated = [a for a in ages if a is not None]
+            if rated and sum(a >= 18 for a in rated) * 2 >= len(ages) and all(a >= 18 for a in rated):
+                names.add(getattr(ie, "IE_NAME", ie.ie_key()).split(":")[0])
+        _ADULT_CACHE = sorted(names, key=str.lower)
+    return _ADULT_CACHE

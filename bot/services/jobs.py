@@ -23,8 +23,11 @@ from ..config import Settings
 from ..db import Database, User
 from ..utils import cache_key, domain_of, esc, human_duration, human_size, progress_bar, truncate
 from .delivery import Delivery, make_zip
-from .downloader import Cancelled, Downloader, Preset, friendly_error
+from .downloader import AdultBlocked, Cancelled, Downloader, Preset, friendly_error, supported_extractor
 from .images import FoundImage, ImageService
+from .pagevideo import find_videos, page_is_adult
+from .policy import ADULT_BLOCKED_MESSAGE, Policy
+from .siterules import SiteRules
 
 log = logging.getLogger(__name__)
 
@@ -106,11 +109,54 @@ class QuotaExceeded(Exception):
     pass
 
 
+class PolicyBlocked(Exception):
+    """The URL is refused by content policy (DRM service or admin-blocked domain)."""
+
+
+# Social sites where a post can be photos only; yt-dlp then finds "no video" and gallery-dl takes over.
+PHOTO_POST_SITES = (
+    "instagram.com",
+    "x.com",
+    "twitter.com",
+    "tiktok.com",
+    "facebook.com",
+    "threads.net",
+    "threads.com",
+    "pinterest.com",
+    "reddit.com",
+    "tumblr.com",
+    "bsky.app",
+    "vk.com",
+    "weibo.com",
+    "imgur.com",
+    "flickr.com",
+    "deviantart.com",
+    "artstation.com",
+)
+NO_VIDEO_HINTS = (
+    "no video formats",
+    "no video in this",
+    "there's no video",
+    "no media found",
+    "no video could be found",
+    "unsupported url",
+    "nothing was downloaded",
+)
+
+
 class JobManager:
     def __init__(
-        self, settings: Settings, db: Database, downloader: Downloader, images: ImageService, delivery: Delivery
+        self,
+        settings: Settings,
+        db: Database,
+        downloader: Downloader,
+        images: ImageService,
+        delivery: Delivery,
+        policy: Policy | None = None,
     ):
         self.settings = settings
+        self.policy = policy or Policy(db, settings)
+        self.site_rules = SiteRules(db)
         self.db = db
         self.downloader = downloader
         self.images = images
@@ -166,6 +212,8 @@ class JobManager:
         return max(0, limit - used - pending)
 
     async def submit(self, job: Job, user: User) -> Job:
+        if reason := await self.policy.refusal(job.url):
+            raise PolicyBlocked(reason)
         left = await self.remaining_quota(user)
         if left is not None and left <= 0:
             raise QuotaExceeded()
@@ -356,7 +404,19 @@ class JobManager:
         used_link = False
         try:
             if job.kind == "media":
-                used_link = await self._run_media(job, user, out_dir)
+                try:
+                    used_link = await self._run_media(job, user, out_dir)
+                except DownloadError as exc:
+                    shutil.rmtree(out_dir, ignore_errors=True)
+                    if self._photo_post_fallback(job, exc):
+                        # A photo/carousel post on a social site: fetch the pictures with gallery-dl instead.
+                        job.kind, job.options = "gallery", {**job.options, "mode": "auto", "limit": 50}
+                        used_link = await self._run_images(job, user, out_dir)
+                    elif self._page_fallback_applies(job, exc):
+                        # No yt-dlp extractor for this site: look for streams in the page itself.
+                        used_link = await self._run_page_video(job, user, out_dir, exc)
+                    else:
+                        raise
             else:
                 used_link = await self._run_images(job, user, out_dir)
             job.status = "done"
@@ -364,6 +424,10 @@ class JobManager:
         except (Cancelled, DownloadCancelled):
             job.status = "cancelled"
             await self._finish_message(job, "✖ Cancelled")
+        except AdultBlocked:
+            job.status = "failed"
+            job.error = ADULT_BLOCKED_MESSAGE
+            await self._finish_message(job, "🔞 Not downloaded")
         except DownloadError as exc:
             job.status = "failed"
             job.error = friendly_error(exc)
@@ -388,6 +452,16 @@ class JobManager:
             if not used_link:
                 shutil.rmtree(out_dir, ignore_errors=True)
 
+    @staticmethod
+    def _photo_post_fallback(job: Job, exc: Exception) -> bool:
+        domain = domain_of(job.url)
+        on_social = any(domain == d or domain.endswith("." + d) for d in PHOTO_POST_SITES)
+        return (
+            on_social
+            and job.preset.mode in ("video", "format")
+            and any(hint in str(exc).lower() for hint in NO_VIDEO_HINTS)
+        )
+
     def _preset_record(self, job: Job) -> dict[str, Any]:
         return {"kind": job.kind, "preset": job.preset.to_dict(), "options": job.options}
 
@@ -401,7 +475,46 @@ class JobManager:
         link = f'<a href="{esc(url)}">{esc(domain_of(url) or "source")}</a>'
         return f"{title_line}\n{link}{' · ' + extra if extra else ''}"
 
-    async def _run_media(self, job: Job, user: User, out_dir: Path) -> bool:
+    @staticmethod
+    def _page_fallback_applies(job: Job, exc: Exception) -> bool:
+        text = str(exc).lower()
+        return (
+            job.preset.mode in ("video", "audio")
+            and not job.preset.playlist
+            and ("unsupported url" in text or "no video formats" in text or "unable to extract" in text)
+        )
+
+    async def _run_page_video(self, job: Job, user: User, out_dir: Path, original: Exception) -> bool:
+        try:
+            html, final_url = await self.images.fetch_page(job.url)
+        except Exception:  # noqa: BLE001 - the page itself is unreachable: report the original error
+            raise original from None
+        if not html:
+            raise original
+        allow_adult = await self.policy.adult_allowed(user)
+        if page_is_adult(html) and not allow_adult:
+            raise AdultBlocked()
+        # Admin-defined /siterule patterns win; then everything the generic page scan finds.
+        ruled = await self.site_rules.candidates(html, final_url)
+        generic = find_videos(html, final_url, embed_supported=lambda u: supported_extractor(u) is not None)
+        candidates = ruled + [c for c in generic if c.url not in {r.url for r in ruled}]
+        if not candidates:
+            raise DownloadError(
+                "No downloadable video stream was found on this page. It may be encrypted or assembled by scripts; "
+                "an admin can inspect it with /pagedebug and add a /siterule."
+            )
+        last: Exception = original
+        for candidate in candidates[:4]:
+            try:
+                return await self._run_media(job, user, out_dir, source_url=candidate.url, referer=final_url)
+            except DownloadError as exc:
+                last = exc
+                shutil.rmtree(out_dir, ignore_errors=True)
+        raise last
+
+    async def _run_media(
+        self, job: Job, user: User, out_dir: Path, source_url: str | None = None, referer: str | None = None
+    ) -> bool:
         assert self.bot is not None
         key = cache_key(job.url, job.preset.to_dict())
         as_document = bool(job.options.get("as_document", user.pref("as_document")))
@@ -426,7 +539,10 @@ class JobManager:
             await self.db.add_usage(job.user_id, 1, 0)
             return False
 
-        info, files = await self.downloader.download(job.url, job.preset, out_dir, self._hook(job))
+        allow_adult = await self.policy.adult_allowed(user)
+        info, files = await self.downloader.download(
+            source_url or job.url, job.preset, out_dir, self._hook(job), allow_adult, referer
+        )
         if job.cancelled:
             raise Cancelled()
         job.title = (info or {}).get("title") or job.title or files[0].stem
@@ -493,8 +609,16 @@ class JobManager:
         assert self.bot is not None
         opts = job.options
         limit = int(opts.get("limit") or self.settings.max_images_per_request)
+        allow_adult = await self.policy.adult_allowed(user)
         if job.kind == "gallery":
             job.phase = "downloading"
+            if not allow_adult:
+                try:
+                    html, _ = await self.images.fetch_page(job.url)
+                except Exception:  # noqa: BLE001 - gallery sites often refuse plain fetches; gallery-dl decides
+                    html = ""
+                if html and page_is_adult(html):
+                    raise AdultBlocked()
             files = await self.images.gallery_dl(job.url, out_dir, limit=limit)
             job.title = job.title or domain_of(job.url)
         else:
@@ -502,7 +626,9 @@ class JobManager:
                 found = [FoundImage(u, "direct") for u in opts.get("urls", [])]
                 job.title = job.title or f"{len(found)} images"
             else:
-                found, title = await self.images.find(job.url)
+                found, title, html = await self.images.find_page(job.url)
+                if html and page_is_adult(html) and not allow_adult:
+                    raise AdultBlocked()
                 job.title = title
             if opts.get("pick") == "largest":
                 found.sort(key=lambda f: f.width, reverse=True)

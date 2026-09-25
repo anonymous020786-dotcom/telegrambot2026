@@ -17,7 +17,7 @@ from ..context import Services
 from ..db import User
 from ..registry import REGISTRY, Command
 from ..services.downloader import Preset
-from ..services.jobs import Job, QuotaExceeded
+from ..services.jobs import Job, PolicyBlocked, QuotaExceeded
 from ..utils import esc, extract_urls, is_http_url
 
 log = logging.getLogger(__name__)
@@ -119,6 +119,9 @@ async def enqueue(
     )
     try:
         await s.jobs.submit(job, user)
+    except PolicyBlocked as exc:
+        await reply(update, esc(str(exc)))
+        return None
     except QuotaExceeded:
         limit = user.daily_limit if user.daily_limit is not None else s.settings.daily_limit
         await reply(update, f"🚦 You've reached your daily limit of {limit} downloads. It resets at 00:00 UTC.")

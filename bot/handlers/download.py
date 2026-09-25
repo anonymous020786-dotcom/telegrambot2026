@@ -15,6 +15,7 @@ from yt_dlp.utils import DownloadError
 from ..db import User
 from ..registry import command
 from ..services.downloader import AUDIO_FORMATS, QUALITIES, MediaInfo, friendly_error
+from ..services.policy import ADULT_BLOCKED_MESSAGE, is_adult
 from ..ui import cards
 from ..utils import (
     esc,
@@ -530,6 +531,9 @@ async def ytmp3(update: Update, context: Ctx, user: User) -> None:
 
 async def show_card(update: Update, context: Ctx, url: str, edit_message=None) -> None:
     s = svc(context)
+    if reason := await s.policy.refusal(url):
+        await reply(update, esc(reason))
+        return
     status = edit_message or await reply(update, "🔎 Looking up the link…")
     playlist_hint = any(k in url for k in ("list=", "/playlist", "/sets/", "/album/", "/channel/", "/@"))
     try:
@@ -551,6 +555,11 @@ async def show_card(update: Update, context: Ctx, url: str, edit_message=None) -
     except Exception as exc:  # noqa: BLE001
         if status:
             await status.edit_text(f"⚠️ {esc(friendly_error(exc))}", parse_mode=ParseMode.HTML)
+        return
+    viewer = await s.db.ensure_user(update.effective_user.id)
+    if is_adult(info.raw) and not await s.policy.adult_allowed(viewer):
+        if status:
+            await status.edit_text(ADULT_BLOCKED_MESSAGE)
         return
     token = s.tokens.put(url)
     text, markup = cards.media_card(info), cards.media_keyboard(token, info)

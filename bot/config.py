@@ -10,6 +10,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 IntList = Annotated[list[int], NoDecode]
+StrList = Annotated[list[str], NoDecode]
 
 
 class Settings(BaseSettings):
@@ -62,6 +63,10 @@ class Settings(BaseSettings):
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
     )
 
+    # --- Content policy ------------------------------------------------------------
+    adult_content: str = "off"  # off | optin (adults confirm 18+ with /setadult); admins can change it live
+    blocked_domains: StrList = Field(default_factory=list)  # never download from these (comma-separated)
+
     # --- Misc ----------------------------------------------------------------------
     log_level: str = "INFO"
     watch_interval_minutes: int = 30
@@ -75,6 +80,19 @@ class Settings(BaseSettings):
         if isinstance(value, int):
             return [value]
         return value
+
+    @field_validator("blocked_domains", mode="before")
+    @classmethod
+    def _split_domains(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [x.strip().lower() for x in value.replace(";", ",").split(",") if x.strip()]
+        return value
+
+    @field_validator("adult_content", mode="before")
+    @classmethod
+    def _adult_mode(cls, value: object) -> object:
+        v = str(value or "off").strip().lower()
+        return v if v in ("off", "optin") else "off"
 
     @field_validator("bot_api_base_url", "bot_api_base_file_url", "link_base_url", "proxy", "s3_bucket", mode="before")
     @classmethod
@@ -101,6 +119,18 @@ class Settings(BaseSettings):
     @property
     def log_dir(self) -> Path:
         return self.data_dir / "logs"
+
+    @property
+    def uploaded_cookies(self) -> Path:
+        """Where /cookies stores an admin-uploaded cookies.txt."""
+        return self.data_dir / "cookies.txt"
+
+    def cookies_path(self) -> Path | None:
+        """COOKIES_FILE if configured, else a cookies file uploaded with /cookies, else None."""
+        for candidate in (self.cookies_file, self.uploaded_cookies):
+            if candidate and Path(candidate).is_file():
+                return Path(candidate)
+        return None
 
     @property
     def upload_limit_bytes(self) -> int:

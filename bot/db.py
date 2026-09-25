@@ -112,6 +112,7 @@ DEFAULT_USER_SETTINGS: dict[str, Any] = {
     "filename": "%(title).80B",
     "playlist_limit": 25,
     "timezone": "UTC",
+    "adult_ok": False,  # user confirmed 18+ (only effective when the admin allows adult content)
 }
 
 
