@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yt_dlp
 from yt_dlp.utils import DownloadCancelled, DownloadError, download_range_func
 
@@ -541,6 +542,22 @@ def extractor_names() -> list[str]:
         if ie.working() and ie.ie_key() != "Generic":
             names.add(getattr(ie, "IE_NAME", ie.ie_key()).split(":")[0])
     return sorted(names, key=str.lower)
+
+
+# Failures worth retrying automatically: rate limits, server errors and flaky networks. Anything else
+# (404, private, DRM, unsupported…) fails the same way on every attempt.
+TRANSIENT_RE = re.compile(
+    r"http error (?:429|5\d\d)|too many requests|timed? ?out|connection (?:reset|aborted|refused)"
+    r"|remote end closed|temporary failure in name resolution|name or service not known|incomplete ?read"
+    r"|eof occurred|bad gateway|service unavailable|gateway time-?out|server disconnected",
+    re.I,
+)
+
+
+def is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError | ConnectionError | httpx.TransportError):
+        return True
+    return bool(TRANSIENT_RE.search(str(exc)))
 
 
 def friendly_error(exc: BaseException) -> str:

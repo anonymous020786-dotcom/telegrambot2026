@@ -167,7 +167,8 @@ def _replied(kind: str | None, bot: FakeBot, sample_video: Path, tmp: Path, web:
 
 async def _run(services, name: str, web: str, sample_video: Path, tmp: Path) -> tuple[FakeBot, SimpleNamespace]:
     args_t, kind = CASES[name]
-    args = [a.replace(W, web) for a in args_t]
+    # A per-command query string keeps identical links apart, so duplicate protection doesn't merge them.
+    args = [a.replace(V, f"{V}?cmd={name}").replace(W, web) for a in args_t]
     bot = FakeBot()
     services.last_command.clear()
     update = make_update(bot, 1, text=f"/{name} " + " ".join(args))
@@ -202,7 +203,9 @@ async def test_every_command_works(services, web, sample_video, tmp_path):
             for jid in set(services.jobs.jobs) - before:
                 job_owner[jid] = name
             texts = " ".join(bot.texts())
-            if "Something went wrong" in texts:
+            if "Already on it" in texts:
+                problems.append(f"/{name}: treated as a duplicate, so its own download never ran")
+            elif "Something went wrong" in texts:
                 problems.append(f"/{name}: {texts[:200]}")
             elif not bot.calls and not (set(services.jobs.jobs) - before):
                 problems.append(f"/{name}: no reply and no job")

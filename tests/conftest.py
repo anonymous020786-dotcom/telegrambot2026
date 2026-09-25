@@ -6,7 +6,7 @@ import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from PIL import Image
@@ -59,6 +59,7 @@ def _png(width: int, height: int, color=(200, 30, 90)) -> bytes:
 
 class _Handler(SimpleHTTPRequestHandler):
     root: Path
+    flaky_hits: ClassVar[dict[str, int]] = {}  # /flaky/<key>/<file>?fail=N answers 503 to the first N requests per key
 
     def log_message(self, *args: Any) -> None:
         pass
@@ -75,7 +76,14 @@ class _Handler(SimpleHTTPRequestHandler):
         self.do_GET()
 
     def do_GET(self) -> None:
-        path = self.path.split("?")[0]
+        path, _, query = self.path.partition("?")
+        if path.startswith("/flaky/"):
+            _, _, key, rest = path.split("/", 3)
+            fail = int(dict(p.split("=", 1) for p in query.split("&") if "=" in p).get("fail", "1"))
+            hits = self.flaky_hits[key] = self.flaky_hits.get(key, 0) + 1
+            if hits <= fail:
+                return self._send(b"busy", "text/plain", 503)
+            path = "/" + rest
         if path in ("/", "/gallery.html"):
             return self._send(SITE_HTML.encode(), "text/html; charset=utf-8")
         if path == "/redirect":

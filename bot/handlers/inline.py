@@ -30,7 +30,7 @@ from telegram.error import TelegramError
 from ..db import User
 from ..registry import command
 from ..services.downloader import Preset
-from ..services.jobs import Job, PolicyBlocked, QuotaExceeded
+from ..services.jobs import DuplicateJob, Job, PolicyBlocked, QuotaExceeded
 from ..utils import cache_key, domain_of, esc, extract_urls, human_duration, truncate
 from .common import Ctx, is_allowed, preset_for, reply, svc
 
@@ -227,6 +227,8 @@ async def start_inline_download(context: Ctx, user: User, token: str, inline_mes
         return str(exc)
     except QuotaExceeded:
         return "You've reached your daily download limit."
+    except DuplicateJob:
+        return "Already downloading. The file appears here when it's ready."
     target.started = True
     return None
 
