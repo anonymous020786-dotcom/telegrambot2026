@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import os
 import shutil
 
 from telegram import InlineKeyboardButton as B
@@ -17,7 +16,7 @@ from ..services.pagevideo import find_videos, page_is_adult
 from ..services.policy import normalize_domain
 from ..services.sitecheck import check, default_targets
 from ..services.siterules import apply_rules, rules_for
-from ..utils import esc, extract_urls, human_duration, truncate
+from ..utils import esc, extract_urls, human_duration, truncate, write_atomic
 from .common import Ctx, arg_text, fetch_replied_file, reply, svc, usage
 
 # ------------------------------------------------------------------ 18+ content
@@ -122,6 +121,18 @@ async def blockedsites(update: Update, context: Ctx, user: User) -> None:
 # ------------------------------------------------------------------ cookies
 
 
+COOKIE_HEADER = "# Netscape HTTP Cookie File"
+
+
+def normalize_cookie_file(text: str) -> str:
+    """yt-dlp only loads a cookies.txt whose first line is the Netscape header; some exporters omit it."""
+    text = text.lstrip("\ufeff")
+    first = text.split("\n", 1)[0].strip()
+    if first not in (COOKIE_HEADER, "# HTTP Cookie File"):
+        text = f"{COOKIE_HEADER}\n{text}"
+    return text
+
+
 def parse_cookie_file(text: str) -> list[str]:
     """Validate a Netscape cookies.txt; returns the cookie domains. Raises ValueError if it's not one."""
     domains: set[str] = set()
@@ -177,8 +188,8 @@ async def cookies(update: Update, context: Ctx, user: User) -> None:
     except ValueError as exc:
         await reply(update, f"⚠️ {esc(exc)}")
         return
-    target.write_bytes(data)
-    os.chmod(target, 0o600)
+    # Atomic and private from the first byte: running downloads may be reading the old file right now.
+    write_atomic(target, normalize_cookie_file(data.decode(errors="replace")).encode(), mode=0o600)
     try:
         await update.effective_message.reply_to_message.delete()  # don't leave the cookies in the chat history
     except Exception:  # noqa: BLE001

@@ -151,3 +151,80 @@ async def test_per_user_concurrency(services, settings, monkeypatch):
     assert set(started) == {a1.id, b1.id}  # alice's second job waits for her first
     gate.set()
     await wait_for(lambda: len(started) == 3, timeout=5)
+
+
+# ------------------------------------------------------------------ surviving a restart
+
+
+@needs_ffmpeg
+async def test_queued_jobs_survive_a_restart(settings, web):
+    first = build_services(settings)
+    await first.db.connect()
+    old_bot = FakeBot()
+    first.jobs.start(old_bot)
+    alice = await first.db.upsert_user(20, "alice", "A")
+    bob = await first.db.upsert_user(21, "bob", "B")
+    await first.jobs.set_paused_all(True)  # nothing starts, like a queue that's busy at shutdown time
+    first.jobs.hold(bob.id)
+    kept = Job(user_id=20, chat_id=20, url=f"{web}/sample.mp4", preset=Preset(mode="audio", audio_format="mp3"))
+    held = Job(user_id=21, chat_id=21, url=f"{web}/sample.mp4", preset=Preset(section=(1, 3)))
+    gone = Job(user_id=20, chat_id=20, url=f"{web}/sample.mp4")
+    blocked = Job(user_id=20, chat_id=20, url=f"{web}/sample.mp4?v=2")
+    for job, user in ((kept, alice), (held, bob), (gone, alice), (blocked, alice)):
+        await first.jobs.submit(job, user)
+    assert held.status == "held"
+    first.jobs.cancel(gone.id, 20)  # a cancelled job must not come back
+    await first.jobs.stop()  # shutdown: /restart, /updateytdlp, a redeploy…
+    await first.db.close()
+
+    second = build_services(settings)
+    await second.db.connect()
+    new_bot = FakeBot()
+    second.jobs.start(new_bot)
+    try:
+        assert await second.jobs.restore() == 3
+        assert second.jobs.paused_all and second.jobs.held_users == {21}  # pauses are kept too
+        again = {j.id: j for j in second.jobs.jobs.values()}
+        assert set(again) == {kept.id, held.id, blocked.id}
+        assert again[held.id].status == "held" and again[held.id].preset.section == (1, 3)
+        assert again[kept.id].preset.audio_format == "mp3"
+        assert ("delete_message", kept.message_id) in new_bot.calls  # stale progress message removed
+        assert any("Resumed after a bot restart" in t for t in new_bot.texts())
+
+        second.jobs.cancel(blocked.id, 20)
+        await second.jobs.set_paused_all(False)
+        second.jobs.release(21)
+        await wait_for(lambda: all(j.status in ("done", "failed", "cancelled") for j in again.values()))
+        assert again[kept.id].status == "done", again[kept.id].error
+        assert again[held.id].status == "done", again[held.id].error
+        await wait_for(lambda: not second.jobs._background_tasks)
+        assert await second.db.pending_jobs() == []  # finished work is forgotten
+        assert await second.jobs.restore() == 0
+    finally:
+        await second.jobs.stop()
+        await second.db.close()
+
+
+async def test_restore_drops_jobs_the_policy_now_refuses(services):
+    user = await services.db.upsert_user(22, "c", "C")
+    job = Job(user_id=22, chat_id=22, url="https://video.example/watch/1")
+    await services.jobs.submit(job, user)
+    services.jobs.jobs.clear()  # as if the process had died
+    await services.db.set_kv("blocked_domains", '["video.example"]')
+    services.jobs.bot = bot = FakeBot()
+    assert await services.jobs.restore() == 0
+    assert "dropped" in bot.texts()[0]
+    assert await services.db.pending_jobs() == []
+
+
+async def test_a_job_interrupted_mid_download_stays_pending(services, monkeypatch):
+    async def endless(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(services.downloader, "download", endless)
+    services.jobs.start(FakeBot())
+    user = await services.db.upsert_user(23, "d", "D")
+    job = await services.jobs.submit(Job(user_id=23, chat_id=23, url="https://video.example/v/1"), user)
+    await wait_for(lambda: job.status == "running")
+    await services.jobs.stop()
+    assert [r["id"] for r in await services.db.pending_jobs()] == [job.id]

@@ -407,15 +407,13 @@ async def killjob(update: Update, context: Ctx, user: User) -> None:
 
 @command("pauseall", "admin", "Stop starting new jobs for everyone", admin=True)
 async def pauseall(update: Update, context: Ctx, user: User) -> None:
-    svc(context).jobs.paused_all = True
-    await reply(update, "⏸ Global queue paused. Running jobs finish; /resumeall to continue.")
+    await svc(context).jobs.set_paused_all(True)
+    await reply(update, "⏸ Global queue paused (kept across restarts). Running jobs finish; /resumeall to continue.")
 
 
 @command("resumeall", "admin", "Resume the global queue", admin=True)
 async def resumeall(update: Update, context: Ctx, user: User) -> None:
-    s = svc(context)
-    s.jobs.paused_all = False
-    s.jobs._wake.set()
+    await svc(context).jobs.set_paused_all(False)
     await reply(update, "▶️ Global queue resumed.")
 
 

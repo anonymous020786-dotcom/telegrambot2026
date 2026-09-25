@@ -3,7 +3,7 @@
 [![CI](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml/badge.svg)](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml)
 
 A **private** Telegram bot, written in Python, that downloads **public videos, audio and images from almost any
-website**, in any available format or quality. It has **166 commands**, 129 for users and 37 for admins, plus
+website**, in any available format or quality. It has **167 commands**, 130 for users and 37 for admins, plus
 button menus throughout.
 
 - **Videos and audio from 1,800+ sites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp): every resolution from
@@ -19,8 +19,12 @@ button menus throughout.
 - **18 media tools** (ffmpeg/Pillow) that work on files you send: convert, compress (to a target size), trim, speed,
   rotate, resize, GIF, frame capture, volume, reverse, voice message, round video message, media info, and image
   convert/resize/EXIF.
+- **Inline mode**: type `@yourbot <link>` or `@yourbot <search words>` in any chat, group or channel and pick
+  🎬 Video or 🎵 Audio. Files downloaded before post instantly; others show "⏳ Downloading…" and are replaced by
+  the file when it's ready. See `/inline`.
 - **Download queue**: parallel workers with a per-user limit and daily quotas, pause and resume, move to front,
-  retry, and instant re-sending of files already downloaded (cached by Telegram file ID).
+  retry, and instant re-sending of files already downloaded (cached by Telegram file ID). The queue survives
+  restarts, updates and crashes: waiting and interrupted downloads resume automatically, and pauses are kept.
 - **Library**: history, favorites, search, one-tap re-download, CSV export.
 - **Subscriptions**: watch a channel or playlist and get new uploads automatically. You can also **schedule**
   downloads ("in 2h", "18:30", "2026-10-01 08:00", in your time zone).
@@ -96,7 +100,7 @@ See **[docs/DEPLOY.md](docs/DEPLOY.md)** for step-by-step instructions, 2 GB upl
 | `/watch CHANNEL_URL` | New uploads sent to you automatically |
 | `/schedule 18:30 URL` | The download starts at 18:30 your time |
 
-The full list of all 166 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
+The full list of all 167 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
 
 ## Configuration
 

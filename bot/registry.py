@@ -48,6 +48,7 @@ MODULE_ORDER = (
     "general",
     "download",
     "images",
+    "inline",
     "tools",
     "library",
     "settings",

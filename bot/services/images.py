@@ -18,6 +18,7 @@ from PIL import Image, UnidentifiedImageError
 
 from ..config import Settings
 from ..utils import IMAGE_EXTS, ext_of, looks_like_image_url, safe_filename
+from .downloader import private_cookie_copy
 
 log = logging.getLogger(__name__)
 
@@ -275,17 +276,19 @@ class ImageService:
         cmd += ["--quiet", "-D", str(dest), "--range", f"1-{limit}", "--no-mtime"]
         if self.settings.proxy:
             cmd += ["--proxy", self.settings.proxy]
-        if cookies := self.settings.cookies_path():
-            cmd += ["--cookies", str(cookies)]
-        cmd.append(url)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        try:
-            _, err = await asyncio.wait_for(proc.communicate(), timeout)
-        except TimeoutError:
-            proc.kill()
-            raise
+        with private_cookie_copy(self.settings.cookies_path()) as cookies:
+            if cookies:
+                cmd += ["--cookies", cookies]
+            cmd.append(url)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            try:
+                _, err = await asyncio.wait_for(proc.communicate(), timeout)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise
         files = sorted(p for p in dest.rglob("*") if p.is_file() and not p.name.endswith(".part"))
         if not files and proc.returncode:
             lines = (err or b"").decode(errors="replace").strip().splitlines()

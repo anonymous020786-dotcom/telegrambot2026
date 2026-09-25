@@ -6,15 +6,26 @@ import asyncio
 import contextlib
 import heapq
 import itertools
+import json
 import logging
 import secrets
 import shutil
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Bot,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaAnimation,
+    InputMediaAudio,
+    InputMediaDocument,
+    InputMediaPhoto,
+    InputMediaVideo,
+)
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, TelegramError
 from yt_dlp.utils import DownloadCancelled, DownloadError
@@ -30,6 +41,15 @@ from .policy import ADULT_BLOCKED_MESSAGE, Policy
 from .siterules import SiteRules
 
 log = logging.getLogger(__name__)
+
+# Media types an inline message can be switched to (voice notes and video notes can't).
+INLINE_MEDIA = {
+    "video": InputMediaVideo,
+    "audio": InputMediaAudio,
+    "animation": InputMediaAnimation,
+    "photo": InputMediaPhoto,
+    "document": InputMediaDocument,
+}
 
 PROGRESS_INTERVAL = 2.5
 
@@ -60,6 +80,9 @@ class Job:
     cancelled: bool = False
     files_sent: int = 0
     bytes_sent: int = 0
+    resumed: bool = False  # re-queued after a bot restart
+    file_id: str | None = None  # Telegram file of a single-file result (lets inline mode post it anywhere)
+    file_kind: str | None = None
 
     @property
     def fraction(self) -> float:
@@ -84,6 +107,8 @@ def progress_text(job: Job) -> str:
         else {"images": "images", "gallery": "gallery", "imagelist": "images"}.get(job.kind, job.kind)
     )
     lines = [f"{icon} <b>{phase}</b> · {esc(what)}", f"<b>{esc(truncate(job.title or job.url, 90))}</b>"]
+    if job.resumed and job.phase == "queued":
+        lines.append("♻️ Resumed after a bot restart")
     if job.phase == "downloading":
         if job.total:
             lines.append(f"{progress_bar(job.fraction)} {job.fraction * 100:4.1f}%")
@@ -169,6 +194,8 @@ class JobManager:
         self._workers: list[asyncio.Task] = []
         self.held_users: set[int] = set()
         self.paused_all = False
+        self._stopping = False
+        self._background_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------ lifecycle
     def start(self, bot: Bot) -> None:
@@ -177,6 +204,8 @@ class JobManager:
             self._workers.append(asyncio.create_task(self._worker(i), name=f"job-worker-{i}"))
 
     async def stop(self) -> None:
+        # Unfinished jobs stay in pending_jobs, so restore() picks them up on the next start.
+        self._stopping = True
         for job in self.jobs.values():
             job.cancelled = True
         for task in self._workers:
@@ -185,6 +214,103 @@ class JobManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._workers.clear()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+
+    # ------------------------------------------------------------------ persistence (survives restarts)
+    def _background(self, coro: Coroutine[Any, Any, Any]) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:  # no running loop (sync tests): nothing to persist to
+            coro.close()
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _db_quietly(self, what: str, coro: Coroutine[Any, Any, Any]) -> None:
+        try:
+            await coro
+        except Exception as exc:  # noqa: BLE001 - persistence must never break the queue itself
+            log.warning("could not %s: %s", what, exc)
+
+    @staticmethod
+    def _pending_row(job: Job) -> dict[str, Any]:
+        return {
+            "id": job.id,
+            "user_id": job.user_id,
+            "chat_id": job.chat_id,
+            "url": job.url,
+            "kind": job.kind,
+            "preset": json.dumps(job.preset.to_dict()),
+            "options": json.dumps(job.options),
+            "priority": job.priority,
+            "reply_to": job.reply_to,
+            "message_id": job.message_id,
+            "title": job.title,
+            "created_at": job.created_at,
+        }
+
+    def _forget_pending(self, job: Job) -> None:
+        self._background(self._db_quietly("forget a finished job", self.db.delete_pending(job.id)))
+
+    def _save_queue_state(self) -> None:
+        async def save() -> None:
+            await self.db.set_kv("held_users", json.dumps(sorted(self.held_users)))
+            await self.db.set_kv("paused_all", "1" if self.paused_all else "0")
+
+        self._background(self._db_quietly("save the queue state", save()))
+
+    async def set_paused_all(self, paused: bool) -> None:
+        self.paused_all = paused
+        self._wake.set()
+        await self._db_quietly("save the queue state", self.db.set_kv("paused_all", "1" if paused else "0"))
+
+    async def restore(self) -> int:
+        """Re-queue the jobs that were waiting or running when the bot last stopped (restart, update, crash)."""
+        self.held_users = set(json.loads(await self.db.get_kv("held_users", "[]") or "[]"))
+        self.paused_all = (await self.db.get_kv("paused_all", "0")) == "1"
+        restored = 0
+        for row in await self.db.pending_jobs():
+            if row["id"] in self.jobs:
+                continue
+            if self.bot and row["message_id"]:
+                # The old progress message would stay frozen; a fresh one follows.
+                with contextlib.suppress(TelegramError):
+                    await self.bot.delete_message(row["chat_id"], row["message_id"])
+            user = await self.db.get_user(row["user_id"])
+            reason = await self.policy.refusal(row["url"])
+            if user is None or user.is_banned or reason:
+                await self.db.delete_pending(row["id"])
+                if reason and self.bot:
+                    with contextlib.suppress(TelegramError):
+                        await self.bot.send_message(
+                            row["chat_id"], f"⚠️ A download queued before the restart was dropped: {esc(reason)}"
+                        )
+                continue
+            try:
+                preset = Preset.from_dict(json.loads(row["preset"]))
+                options = json.loads(row["options"])
+            except (TypeError, ValueError) as exc:
+                log.warning("dropping unreadable pending job %s: %s", row["id"], exc)
+                await self.db.delete_pending(row["id"])
+                continue
+            job = Job(
+                user_id=row["user_id"],
+                chat_id=row["chat_id"],
+                url=row["url"],
+                kind=row["kind"],
+                preset=preset,
+                options=options,
+                priority=row["priority"],
+                reply_to=row["reply_to"],
+                id=row["id"],  # same id → same work dir, so yt-dlp resumes its .part files
+                title=row["title"],
+                created_at=row["created_at"],
+                resumed=True,
+            )
+            await self._enqueue(job, user)
+            restored += 1
+        return restored
 
     # ------------------------------------------------------------------ queries
     def user_jobs(self, uid: int) -> list[Job]:
@@ -217,7 +343,12 @@ class JobManager:
         left = await self.remaining_quota(user)
         if left is not None and left <= 0:
             raise QuotaExceeded()
+        return await self._enqueue(job, user)
+
+    async def _enqueue(self, job: Job, user: User) -> Job:
         self.jobs[job.id] = job
+        # Saved before a worker can pick it up, so a finished job's delete always comes after this insert.
+        await self._db_quietly("save a queued job", self.db.save_pending(self._pending_row(job)))
         if user.id in self.held_users:
             job.status = "held"
         else:
@@ -235,6 +366,8 @@ class JobManager:
                 job.message_id = msg.message_id
             except TelegramError as exc:
                 log.warning("could not send progress message: %s", exc)
+            if job.message_id and job.status in ("queued", "held", "running"):
+                await self._db_quietly("save a queued job", self.db.save_pending(self._pending_row(job)))
         return job
 
     def cancel(self, job_id: str, uid: int | None = None) -> Job | None:
@@ -245,6 +378,7 @@ class JobManager:
         if job.status in ("queued", "held"):
             job.status = "cancelled"
             asyncio.get_running_loop().create_task(self._finish_message(job, "✖ Cancelled"))
+            self._forget_pending(job)
         return job
 
     def cancel_all(self, uid: int) -> int:
@@ -252,6 +386,7 @@ class JobManager:
 
     def hold(self, uid: int) -> int:
         self.held_users.add(uid)
+        self._save_queue_state()
         n = 0
         for j in self.user_jobs(uid):
             if j.status == "queued":
@@ -261,6 +396,7 @@ class JobManager:
 
     def release(self, uid: int) -> int:
         self.held_users.discard(uid)
+        self._save_queue_state()
         n = 0
         for j in self.user_jobs(uid):
             if j.status == "held":
@@ -318,6 +454,8 @@ class JobManager:
                 job.finished_at = time.time()
                 self._wake.set()
                 self._forget_later(job)
+                if not self._stopping:  # a job interrupted by shutdown stays pending for restore()
+                    self._forget_pending(job)
 
     def _forget_later(self, job: Job) -> None:
         async def forget() -> None:
@@ -439,6 +577,8 @@ class JobManager:
             await self._finish_message(job, "❌ Failed", retry=True)
         finally:
             reporter.cancel()
+            if job.options.get("inline_message_id"):
+                await self._update_inline(job, user)
             if job.status in ("failed", "cancelled"):
                 await self.db.add_history(
                     job.user_id,
@@ -451,6 +591,29 @@ class JobManager:
                 )
             if not used_link:
                 shutil.rmtree(out_dir, ignore_errors=True)
+
+    async def _update_inline(self, job: Job, user: User) -> None:
+        """Replace an inline-mode placeholder ("⏳ Downloading…") with the file, or say what happened."""
+        assert self.bot is not None
+        inline_id = job.options["inline_message_id"]
+        title = esc(truncate(job.title or job.url, 80))
+        try:
+            if job.status == "done" and job.file_id and job.file_kind in INLINE_MEDIA:
+                caption = self.caption(user, job.title, job.url, job.preset.label())
+                media = INLINE_MEDIA[job.file_kind](media=job.file_id, caption=caption, parse_mode=ParseMode.HTML)
+                await self.bot.edit_message_media(media=media, inline_message_id=inline_id)
+                return
+            if job.status == "done":
+                text = f"✅ <b>{title}</b>\nSent to your private chat with the bot (too large or several files)."
+            elif job.status == "cancelled":
+                text = f"✖ Cancelled: <b>{title}</b>"
+            elif "initiate conversation" in (job.error or "").lower() or "chat not found" in (job.error or "").lower():
+                text = "👋 Open a private chat with the bot and press <b>Start</b> once, then try again."
+            else:
+                text = f"❌ <b>{title}</b>\n{esc(job.error or 'Download failed')}"
+            await self.bot.edit_message_text(text, inline_message_id=inline_id, parse_mode=ParseMode.HTML)
+        except TelegramError as exc:
+            log.warning("could not update inline message for job %s: %s", job.id, exc)
 
     @staticmethod
     def _photo_post_fallback(job: Job, exc: Exception) -> bool:
@@ -522,6 +685,7 @@ class JobManager:
         cached = None if (job.preset.playlist or as_document or force_kind) else await self.db.cache_get(key)
         if cached:
             job.title = cached["title"]
+            job.file_id, job.file_kind = cached["file_id"], cached["kind"]
             caption = self.caption(user, cached["title"], job.url, f"{job.preset.label()} · ⚡ cached")
             await self.delivery.send_cached(
                 self.bot, job.chat_id, cached["kind"], cached["file_id"], caption, reply_to=job.reply_to
@@ -590,6 +754,8 @@ class JobManager:
                 first_file_id, first_kind = sent[0].file_id, sent[0].kind
             job.files_sent += 1
         job.bytes_sent = total_size
+        if first_file_id and len(files) == 1:
+            job.file_id, job.file_kind = first_file_id, first_kind
         if first_file_id and len(files) == 1 and not force_kind and not as_document:
             await self.db.cache_put(key, first_file_id, first_kind or "document", job.title, total_size)
         await self.db.add_history(
@@ -610,6 +776,7 @@ class JobManager:
         opts = job.options
         limit = int(opts.get("limit") or self.settings.max_images_per_request)
         allow_adult = await self.policy.adult_allowed(user)
+        files: list[Path] | None = None
         if job.kind == "gallery":
             job.phase = "downloading"
             if not allow_adult:
@@ -619,9 +786,14 @@ class JobManager:
                     html = ""
                 if html and page_is_adult(html):
                     raise AdultBlocked()
-            files = await self.images.gallery_dl(job.url, out_dir, limit=limit)
-            job.title = job.title or domain_of(job.url)
-        else:
+            try:
+                files = await self.images.gallery_dl(job.url, out_dir, limit=limit)
+                job.title = job.title or domain_of(job.url)
+            except RuntimeError as exc:
+                if "unsupported url" not in str(exc).lower():
+                    raise
+                # gallery-dl has no extractor for this site: scrape the page's images instead.
+        if files is None:
             if job.kind == "imagelist":
                 found = [FoundImage(u, "direct") for u in opts.get("urls", [])]
                 job.title = job.title or f"{len(found)} images"

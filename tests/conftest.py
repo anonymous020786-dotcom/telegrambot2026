@@ -221,6 +221,7 @@ class FakeBot:
         self.calls: list[tuple[str, Any]] = []
         self.sent_files: list[tuple[str, str]] = []
         self.username = "test_bot"
+        self.inline_edits: list[tuple[str | None, str, Any]] = []
 
     async def get_me(self):
         return SimpleNamespace(username=self.username, id=42)
@@ -229,8 +230,16 @@ class FakeBot:
         self.calls.append(("send_message", text))
         return FakeMessage(self, chat_id, text=text)
 
-    async def edit_message_text(self, text: str, chat_id: int, message_id: int, **kw: Any) -> None:
+    async def edit_message_text(
+        self, text: str, chat_id: int | None = None, message_id: int | None = None, **kw: Any
+    ) -> None:
         self.calls.append(("edit_message_text", text))
+        if kw.get("inline_message_id"):
+            self.inline_edits.append((kw["inline_message_id"], "text", text))
+
+    async def edit_message_media(self, media: Any, inline_message_id: str | None = None, **kw: Any) -> None:
+        self.calls.append(("edit_message_media", media.media))
+        self.inline_edits.append((inline_message_id, type(media).__name__, media.media))
 
     async def delete_message(self, chat_id: int, message_id: int) -> None:
         self.calls.append(("delete_message", message_id))
@@ -292,4 +301,57 @@ def make_update(bot: FakeBot, user_id: int = 1, text: str = "", username: str = 
 
 def make_context(services, bot: FakeBot, args: list[str] | None = None):
     app = SimpleNamespace(bot_data={"svc": services}, job_queue=None)
+    return SimpleNamespace(application=app, args=args or [], bot=bot)
+
+
+# ---------------------------------------------------------------- richer fakes for the all-commands test
+
+
+class FakeTgFile:
+    """Stands in for telegram.File: download_to_drive copies a local file."""
+
+    def __init__(self, source: Path):
+        self.source = source
+
+    async def download_to_drive(self, path, **kw: Any) -> Path:
+        import shutil as _shutil
+
+        _shutil.copy(self.source, path)
+        return Path(path)
+
+
+class FakeTgMedia(SimpleNamespace):
+    """A Video/Audio/Document/PhotoSize the bot can download (get_file → FakeTgFile)."""
+
+    def __init__(self, source: Path, **kw: Any):
+        super().__init__(
+            file_id=f"ID_{source.name}",
+            file_size=source.stat().st_size,
+            file_name=source.name,
+            mime_type=kw.pop("mime_type", None),
+            **kw,
+        )
+        self._source = source
+
+    async def get_file(self, **kw: Any) -> FakeTgFile:
+        return FakeTgFile(self._source)
+
+
+class FakeJobQueue:
+    def __init__(self) -> None:
+        self.jobs: list[SimpleNamespace] = []
+
+    def run_once(self, callback, when, data=None, name=None):
+        job = SimpleNamespace(callback=callback, when=when, data=data, name=name, removed=False)
+        job.schedule_removal = lambda: setattr(job, "removed", True)
+        self.jobs.append(job)
+        return job
+
+    def get_jobs_by_name(self, name):
+        return [j for j in self.jobs if j.name == name and not j.removed]
+
+
+def make_full_context(services, bot: FakeBot, args: list[str] | None = None):
+    app = SimpleNamespace(bot_data={"svc": services}, job_queue=FakeJobQueue(), bot=bot, stopped=False)
+    app.stop_running = lambda: setattr(app, "stopped", True)
     return SimpleNamespace(application=app, args=args or [], bot=bot)

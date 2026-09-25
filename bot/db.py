@@ -90,6 +90,20 @@ CREATE TABLE IF NOT EXISTS feedback (
     text TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pending_jobs (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    preset TEXT NOT NULL,
+    options TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    reply_to INTEGER,
+    message_id INTEGER,
+    title TEXT,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS kv (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -466,6 +480,18 @@ class Database:
 
     async def set_kv(self, key: str, value: str) -> None:
         await self._exec("INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)", (key, value))
+
+    # ------------------------------------------------------------------ pending jobs (survive restarts)
+    async def save_pending(self, row: dict[str, Any]) -> None:
+        cols = ", ".join(row)
+        marks = ", ".join("?" for _ in row)
+        await self._exec(f"INSERT OR REPLACE INTO pending_jobs ({cols}) VALUES ({marks})", tuple(row.values()))
+
+    async def delete_pending(self, job_id: str) -> int:
+        return await self._exec("DELETE FROM pending_jobs WHERE id=?", (job_id,))
+
+    async def pending_jobs(self) -> list[aiosqlite.Row]:
+        return await self._all("SELECT * FROM pending_jobs ORDER BY priority, created_at")
 
     # ------------------------------------------------------------------ backup
     def backup_to(self, dest: Path) -> Path:

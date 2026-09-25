@@ -1,6 +1,6 @@
 # Command reference
 
-166 commands: 129 for users and 37 for admins.
+167 commands: 130 for users and 37 for admins.
 This file is generated from the command registry; run `python -m scripts.gen_commands` after changes.
 
 Tips: paste any link to get a preview with buttons. Media tools work when you reply to a file, or send
@@ -106,13 +106,14 @@ the file with the command as its caption.
 | `/imgresize` | Resize an image to a height (keeps aspect ratio) | `/imgresize <height>` |
 | `/imginfo` | Image size, format and EXIF data | `/imginfo (reply to an image file)` |
 
-## 🔎 Search (3)
+## 🔎 Search (4)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
 | `/yt` | Search YouTube and pick a result | `/yt <search words>` |
 | `/sc` | Search SoundCloud and pick a track | `/sc <search words>` |
 | `/ytmp3` | Search YouTube and download the top result as MP3 | `/ytmp3 <search words>` |
+| `/inline` | Post videos or audio into any chat: type @bot <link or words> | `/inline` |
 
 ## 📋 Queue (8)
 
