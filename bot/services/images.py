@@ -19,6 +19,7 @@ from PIL import Image, UnidentifiedImageError
 from ..config import Settings
 from ..utils import IMAGE_EXTS, ext_of, looks_like_image_url, safe_filename
 from .downloader import private_cookie_copy
+from .netguard import request_hook
 
 log = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ class ImageService:
             timeout=httpx.Timeout(30, connect=15),
             proxy=self.settings.proxy,
             limits=httpx.Limits(max_connections=16),
+            event_hooks={"request": [request_hook(self.settings.allow_private_urls)]},
         )
 
     async def fetch_page(self, url: str) -> tuple[str, str]:

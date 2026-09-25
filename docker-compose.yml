@@ -6,7 +6,9 @@
 services:
   bot:
     build: .
-    image: telegram-media-bot:latest
+    # Set BOT_IMAGE=ghcr.io/anonymous020786-dotcom/telegrambot2026:latest in .env to run the prebuilt release image
+    # (docker compose pull bot && docker compose up -d) instead of building on the server.
+    image: ${BOT_IMAGE:-telegram-media-bot:latest}
     restart: unless-stopped
     env_file: .env
     environment:

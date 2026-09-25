@@ -19,6 +19,7 @@ from yt_dlp.utils import DownloadCancelled, DownloadError, download_range_func
 
 from ..config import Settings
 from ..utils import AUDIO_EXTS, IMAGE_EXTS, SUB_EXTS, VIDEO_EXTS, ext_of
+from .netguard import BLOCKED_MESSAGE, check_url
 
 log = logging.getLogger(__name__)
 
@@ -438,7 +439,13 @@ class Downloader:
                 raise DownloadError("No media found")
             return ydl.sanitize_info(info)
 
+    async def _guard(self, url: str) -> None:
+        """Refuse links to private/local addresses before yt-dlp fetches them (see netguard)."""
+        if message := await check_url(url, self.settings.allow_private_urls):
+            raise DownloadError(message)
+
     async def probe(self, url: str, playlist: bool = False) -> MediaInfo:
+        await self._guard(url)
         extra: dict[str, Any] = {"noplaylist": not playlist}
         if playlist:
             extra.update(extract_flat="in_playlist", playlistend=self.settings.max_playlist_items * 4)
@@ -446,6 +453,7 @@ class Downloader:
         return media_info_from(info, url)
 
     async def flat_entries(self, url: str, limit: int = 15) -> MediaInfo:
+        await self._guard(url)
         info = await asyncio.to_thread(self._extract, url, extract_flat="in_playlist", playlistend=limit)
         return media_info_from(info, url)
 
@@ -519,6 +527,7 @@ class Downloader:
         allow_adult: bool = True,
         referer: str | None = None,
     ) -> tuple[dict[str, Any] | None, list[Path]]:
+        await self._guard(url)
         return await asyncio.to_thread(self.download_sync, url, preset, out_dir, hook, allow_adult, referer)
 
 
@@ -565,6 +574,8 @@ def friendly_error(exc: BaseException) -> str:
     # Drop yt-dlp's boilerplate tails ("; please report this issue…", "(caused by …)").
     msg = re.split(r";\s*please report this issue|\s*\(caused by ", msg)[0].strip()
     lowered = msg.lower()
+    if BLOCKED_MESSAGE in msg:
+        return BLOCKED_MESSAGE  # already worded for users; it mentions "private", which isn't a login problem
     if "unsupported url" in lowered:
         return "This link isn't a supported media page. Try /images for pictures on any web page."
     if "drm protected" in lowered or "drm-protected" in lowered or "has drm" in lowered or "uses drm" in lowered:

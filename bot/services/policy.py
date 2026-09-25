@@ -6,6 +6,7 @@ import json
 from typing import Any
 
 from ..utils import domain_of
+from .netguard import check_url
 
 # Subscription streaming services whose video is DRM-encrypted (Widevine/PlayReady/FairPlay).
 # The bot never circumvents DRM, so links to these are refused up front with a clear explanation.
@@ -101,7 +102,7 @@ class Policy:
             return drm_message(service)
         if rule := is_blocked(url, await self.blocked_domains()):
             return f"⛔ Downloads from {rule} are blocked by the bot's admin."
-        return None
+        return await check_url(url, self.settings.allow_private_urls)
 
 
 ADULT_BLOCKED_MESSAGE = (

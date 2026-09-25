@@ -12,13 +12,20 @@ from telegram import InputFile, Update
 
 from ..db import User
 from ..registry import command
+from ..services.netguard import request_hook
 from ..utils import esc, extract_urls, file_digest, human_size, truncate
 from .common import Ctx, arg_text, fetch_replied_file, need_media, need_url, reply, svc, url_from, usage
 
 
 def _client(context: Ctx, follow: bool = True) -> httpx.AsyncClient:
     st = svc(context).settings
-    return httpx.AsyncClient(headers={"User-Agent": st.user_agent}, follow_redirects=follow, timeout=20, proxy=st.proxy)
+    return httpx.AsyncClient(
+        headers={"User-Agent": st.user_agent},
+        follow_redirects=follow,
+        timeout=20,
+        proxy=st.proxy,
+        event_hooks={"request": [request_hook(st.allow_private_urls)]},
+    )
 
 
 async def _head(client: httpx.AsyncClient, url: str) -> httpx.Response:
