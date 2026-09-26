@@ -10,6 +10,8 @@ with the matching section below.
 - **pat.com support** through a new yt-dlp plugin (`yt_dlp_plugins/extractor/pat.py`): every quality from 240p to
   1080p in H.264, H.265 and AV1, plus the direct MP4 files, with H.264 preferred at each resolution. It is rated
   18+, so it follows the adult-content setting like other adult sites.
+- **ShareChat support** (`yt_dlp_plugins/extractor/sharechat.py`): video posts with the clean original
+  (H.264), the H.265 encode and the watermarked copy as separate formats.
 - The bot loads yt-dlp plugins at startup, so extractors in `yt_dlp_plugins/` count as supported sites.
 - `scripts/site_survey.py` checks about 200 popular sites by category using each extractor's sample video
   (`python -m scripts.site_survey [category …]` inside the container).

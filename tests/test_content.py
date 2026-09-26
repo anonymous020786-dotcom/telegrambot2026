@@ -81,6 +81,7 @@ def test_domain_rules():
         "https://www.pinterest.com/pin/123456789012345678/",
         "https://soundcloud.com/artist/track-name",
         "https://bsky.app/profile/someone.bsky.social/post/3l4omssdl632g",
+        "https://sharechat.com/post/m3QqPD0",  # our own plugin (yt_dlp_plugins/extractor/sharechat.py)
     ],
 )
 def test_major_social_platforms_have_dedicated_extractors(url):
