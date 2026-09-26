@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 import yt_dlp
+from yt_dlp.plugins import load_all_plugins
 from yt_dlp.utils import DownloadCancelled, DownloadError, download_range_func
 
 from ..config import Settings
@@ -22,6 +23,10 @@ from ..utils import AUDIO_EXTS, IMAGE_EXTS, SUB_EXTS, VIDEO_EXTS, ext_of
 from .netguard import BLOCKED_MESSAGE, check_url
 
 log = logging.getLogger(__name__)
+
+# Our own extractors (yt_dlp_plugins/extractor/*.py). yt-dlp only loads plugins when a YoutubeDL is created,
+# but supported_extractor()/adult_extractors() list extractors before that.
+load_all_plugins()
 
 AUDIO_FORMATS = ("mp3", "m4a", "opus", "flac", "wav", "aac", "ogg")
 LOSSLESS = {"flac", "wav"}

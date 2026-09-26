@@ -4,6 +4,16 @@ All notable changes to this project. Versions follow [Semantic Versioning](https
 `vX.Y.Z` publishes the Docker image `ghcr.io/anonymous020786-dotcom/telegrambot2026:X.Y.Z` and a GitHub Release
 with the matching section below.
 
+## [Unreleased]
+
+### Added
+- **pat.com support** through a new yt-dlp plugin (`yt_dlp_plugins/extractor/pat.py`): every quality from 240p to
+  1080p in H.264, H.265 and AV1, plus the direct MP4 files, with H.264 preferred at each resolution. It is rated
+  18+, so it follows the adult-content setting like other adult sites.
+- The bot loads yt-dlp plugins at startup, so extractors in `yt_dlp_plugins/` count as supported sites.
+- `scripts/site_survey.py` checks about 200 popular sites by category using each extractor's sample video
+  (`python -m scripts.site_survey [category …]` inside the container).
+
 ## [1.1.0] - 2026-09-25
 
 ### Security

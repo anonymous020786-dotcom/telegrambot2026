@@ -17,6 +17,8 @@ RUN pip install -r requirements.txt
 
 COPY bot ./bot
 COPY scripts ./scripts
+# Extra yt-dlp extractors (found on sys.path; /app is the working directory of `python -m bot`).
+COPY yt_dlp_plugins ./yt_dlp_plugins
 
 RUN useradd --create-home --uid 1000 botuser \
     && mkdir -p /data && chown -R botuser:botuser /data /app \

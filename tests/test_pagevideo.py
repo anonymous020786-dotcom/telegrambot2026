@@ -57,7 +57,7 @@ def test_page_is_adult():
 def test_adult_extractor_catalogue():
     names = {n.lower() for n in adult_extractors()}
     assert len(names) >= 50
-    for site in ("xhamster", "pornhub", "xvideos", "xnxx", "youporn", "redtube", "spankbang", "eporner", "beeg"):
+    for site in ("xhamster", "pornhub", "xvideos", "xnxx", "youporn", "redtube", "spankbang", "eporner", "beeg", "pat"):
         assert site in names, site
     assert "youtube" not in names and "reddit" not in names  # mainstream sites aren't misclassified
 
@@ -77,6 +77,7 @@ def test_adult_extractor_catalogue():
         "TNAFlix",
         "ThisVid",
         "RedGifs",
+        "Pat",  # our own plugin (yt_dlp_plugins/extractor/pat.py)
     ],
 )
 def test_adult_sites_route_to_their_extractors(key):
