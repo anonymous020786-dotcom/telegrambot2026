@@ -1,6 +1,6 @@
 # Command reference
 
-168 commands: 131 for users and 37 for admins.
+169 commands: 132 for users and 37 for admins.
 This file is generated from the command registry; run `python -m scripts.gen_commands` after changes.
 
 Tips: paste any link to get a preview with buttons. Media tools work when you reply to a file, or send
@@ -21,7 +21,7 @@ the file with the command as its caption.
 | `/feedback` | Send a message to the bot owner | `/feedback <message>` |
 | `/id` | Show your Telegram user ID and this chat's ID | `/id` |
 
-## ⬇️ Download (18)
+## ⬇️ Download (19)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
@@ -38,6 +38,7 @@ the file with the command as its caption.
 | `/formats` | List every available format and pick one | `/formats <url>` |
 | `/getformat` | Download a specific format ID (see /formats) | `/getformat <format_id> <url>` |
 | `/clip` | Download only part of a video | `/clip <url> <start> <end>  (e.g. 1:05 2:30)` |
+| `/record` | Record a WebRTC live stream (a WHEP link, or a page whose live player uses WebRTC) | `/record <url> [seconds\|1:30] [token=…]` |
 | `/playlist` | Download a playlist or channel (optionally a range) | `/playlist <url> [1-10] [mp3]` |
 | `/batch` | Download many links at once (one per line) | `/batch <url1> <url2> … [mp3]` |
 | `/direct` | Get direct media URLs (to stream or use elsewhere) | `/direct <url>` |

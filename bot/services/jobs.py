@@ -11,7 +11,7 @@ import logging
 import secrets
 import shutil
 import time
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -33,7 +33,7 @@ from yt_dlp.utils import DownloadCancelled, DownloadError
 from ..config import Settings
 from ..db import Database, User
 from ..utils import cache_key, domain_of, esc, human_duration, human_size, progress_bar, truncate
-from .browser import sniff
+from .browser import record_page, sniff, to_mp4
 from .delivery import Delivery, make_zip
 from .downloader import (
     AdultBlocked,
@@ -48,6 +48,7 @@ from .images import FoundImage, ImageService
 from .pagevideo import find_videos, page_is_adult
 from .policy import ADULT_BLOCKED_MESSAGE, Policy
 from .siterules import SiteRules
+from .webrtc import WebRTCError, looks_like_whep, record_whep
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class Job:
     user_id: int
     chat_id: int
     url: str
-    kind: str = "media"  # media | images | gallery | imagelist
+    kind: str = "media"  # media | images | gallery | imagelist | record
     preset: Preset = field(default_factory=Preset)
     options: dict[str, Any] = field(default_factory=dict)
     priority: int = 5
@@ -100,23 +101,35 @@ class Job:
         return self.downloaded / self.total if self.total else 0.0
 
     def describe(self) -> str:
-        what = self.preset.label() if self.kind == "media" else self.kind
+        what = self.preset.label() if self.kind == "media" else {"record": "live recording"}.get(self.kind, self.kind)
         return f"<code>{self.id}</code> · {what} · {esc(truncate(self.title or domain_of(self.url), 40))}"
 
 
 def progress_text(job: Job) -> str:
-    icon = {"queued": "🕒", "downloading": "⬇️", "processing": "⚙️", "uploading": "⬆️", "retry": "🔁"}.get(job.phase, "⏳")
+    icon = {
+        "queued": "🕒",
+        "downloading": "⬇️",
+        "recording": "🔴",
+        "processing": "⚙️",
+        "converting": "⚙️",
+        "uploading": "⬆️",
+        "retry": "🔁",
+    }.get(job.phase, "⏳")
     phase = {
         "queued": "Queued",
         "retry": "Waiting to retry",
         "downloading": "Downloading",
+        "recording": "Recording live",
         "processing": "Processing",
+        "converting": "Converting",
         "uploading": "Uploading",
     }.get(job.phase, job.phase.title())
     what = (
         job.preset.label()
         if job.kind == "media"
-        else {"images": "images", "gallery": "gallery", "imagelist": "images"}.get(job.kind, job.kind)
+        else {"images": "images", "gallery": "gallery", "imagelist": "images", "record": "live recording"}.get(
+            job.kind, job.kind
+        )
     )
     lines = [f"{icon} <b>{phase}</b> · {esc(what)}", f"<b>{esc(truncate(job.title or job.url, 90))}</b>"]
     if job.resumed and job.phase == "queued":
@@ -132,7 +145,11 @@ def progress_text(job: Job) -> str:
         if job.eta:
             detail += f" · ETA {human_duration(job.eta)}"
         lines.append(detail)
-    elif job.phase == "processing":
+    elif job.phase == "recording":
+        # For live recordings downloaded/total count seconds, not bytes.
+        if job.total:
+            lines.append(f"{progress_bar(job.fraction)} {human_duration(job.downloaded)} / {human_duration(job.total)}")
+    elif job.phase in ("processing", "converting"):
         lines.append("Merging / converting with ffmpeg…")
     elif job.phase == "retry":
         wait = max(0, round(job.not_before - time.time()))
@@ -593,7 +610,11 @@ class JobManager:
         out_dir = self.job_dir(job)
         used_link = False
         try:
-            if job.kind == "media":
+            if job.kind == "media" and looks_like_whep(job.url):
+                job.kind = "record"  # a WHEP link is a WebRTC live stream: record it
+            if job.kind == "record":
+                used_link = await self._run_record(job, user, out_dir)
+            elif job.kind == "media":
                 try:
                     used_link = await self._run_media(job, user, out_dir)
                 except DownloadError as exc:
@@ -755,6 +776,9 @@ class JobManager:
                     last = exc
                     shutil.rmtree(out_dir, ignore_errors=True)
             candidates += sniffed.candidates
+            if not candidates and sniffed.live_player:
+                # The player is fed by WebRTC: there is nothing to download, but it can be recorded.
+                return await self._run_record(job, user, out_dir, page_checked=True)
         if not candidates:
             how = " even after loading it in a browser" if self.settings.browser_fallback else ""
             raise DownloadError(
@@ -763,14 +787,88 @@ class JobManager:
             )
         raise last
 
+    async def _run_record(self, job: Job, user: User, out_dir: Path, page_checked: bool = False) -> bool:
+        """Record a WebRTC live stream: a WHEP link directly, anything else through the page's own player."""
+        limit = self.settings.webrtc_max_record_seconds
+        seconds = max(5, min(int(job.options.get("seconds") or self.settings.webrtc_record_seconds), limit))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        whep = looks_like_whep(job.url)
+        if not whep and not page_checked:
+            with contextlib.suppress(Exception):
+                html, _ = await self.images.fetch_page(job.url)
+                if html and page_is_adult(html) and not await self.policy.adult_allowed(user):
+                    raise AdultBlocked()
+        job.phase = "recording"
+        stamp = time.strftime("%Y-%m-%d %H.%M", time.localtime())
+        title = job.title or f"Live recording {stamp}"
+        path = out_dir / f"{title[:80].replace('/', '_')}.mp4"
+
+        job.downloaded, job.total, job.speed, job.eta = 0, seconds, None, None
+
+        def progress(done: float, total: float) -> None:
+            if job.cancelled:
+                raise Cancelled()
+            job.downloaded, job.eta = int(done), max(0, total - done)
+
+        async def tick() -> None:  # page recordings report no progress of their own
+            began = time.monotonic()
+            while job.phase == "recording":
+                await asyncio.sleep(1)
+                job.downloaded = min(seconds, int(time.monotonic() - began))
+
+        async def recorder() -> tuple[dict[str, Any] | None, list[Path]]:
+            ticker = None if whep else asyncio.create_task(tick())
+            try:
+                if whep:
+                    await record_whep(
+                        job.url,
+                        path,
+                        seconds,
+                        self.settings.user_agent,
+                        token=job.options.get("token"),
+                        allow_private=self.settings.allow_private_urls,
+                        progress=progress,
+                    )
+                else:
+                    raw = path.with_suffix(".webm")
+                    await record_page(
+                        job.url,
+                        raw,
+                        seconds,
+                        self.settings.user_agent,
+                        allow_private=self.settings.allow_private_urls,
+                        proxy=self.settings.proxy,
+                    )
+                    job.phase = "converting"
+                    await to_mp4(raw, path)
+            except WebRTCError as exc:
+                raise DownloadError(str(exc)) from exc
+            except RuntimeError as exc:
+                raise DownloadError(str(exc)) from exc
+            finally:
+                if ticker:
+                    ticker.cancel()
+            return {"title": title}, [path]
+
+        return await self._run_media(job, user, out_dir, recorder=recorder)
+
     async def _run_media(
-        self, job: Job, user: User, out_dir: Path, source_url: str | None = None, referer: str | None = None
+        self,
+        job: Job,
+        user: User,
+        out_dir: Path,
+        source_url: str | None = None,
+        referer: str | None = None,
+        recorder: Callable[[], Awaitable[tuple[dict[str, Any] | None, list[Path]]]] | None = None,
     ) -> bool:
+        """Download (or, with `recorder`, record) the media and deliver it."""
         assert self.bot is not None
         key = cache_key(job.url, job.preset.to_dict())
         as_document = bool(job.options.get("as_document", user.pref("as_document")))
         force_kind = job.options.get("force_kind")
-        cached = None if (job.preset.playlist or as_document or force_kind) else await self.db.cache_get(key)
+        live = recorder is not None  # a live recording differs every time: never serve or store it from the cache
+        no_cache = job.preset.playlist or as_document or force_kind or live
+        cached = None if no_cache else await self.db.cache_get(key)
         if cached:
             job.title = cached["title"]
             job.file_id, job.file_kind = cached["file_id"], cached["kind"]
@@ -791,10 +889,13 @@ class JobManager:
             await self.db.add_usage(job.user_id, 1, 0)
             return False
 
-        allow_adult = await self.policy.adult_allowed(user)
-        info, files = await self.downloader.download(
-            source_url or job.url, job.preset, out_dir, self._hook(job), allow_adult, referer
-        )
+        if recorder is not None:
+            info, files = await recorder()
+        else:
+            allow_adult = await self.policy.adult_allowed(user)
+            info, files = await self.downloader.download(
+                source_url or job.url, job.preset, out_dir, self._hook(job), allow_adult, referer
+            )
         if job.cancelled:
             raise Cancelled()
         job.title = (info or {}).get("title") or job.title or files[0].stem
@@ -844,7 +945,7 @@ class JobManager:
         job.bytes_sent = total_size
         if first_file_id and len(files) == 1:
             job.file_id, job.file_kind = first_file_id, first_kind
-        if first_file_id and len(files) == 1 and not force_kind and not as_document:
+        if first_file_id and len(files) == 1 and not force_kind and not as_document and not live:
             await self.db.cache_put(key, first_file_id, first_kind or "document", job.title, total_size)
         await self.db.add_history(
             job.user_id,

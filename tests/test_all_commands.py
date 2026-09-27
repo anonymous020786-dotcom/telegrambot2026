@@ -36,7 +36,7 @@ CASES: dict[str, tuple[list[str], str | None]] = {
     # download
     "dl": ([V], None), "video": ([V], None), "audio": ([V], None), "best": ([V], None), "worst": ([V], None),
     "hd": ([V], None), "fhd": ([V], None), "4k": ([V], None), "preview": ([V], None), "q": (["480", V], None),
-    "formats": ([V], None), "getformat": (["0", V], None), "clip": ([V, "0:01", "0:03"], None),
+    "formats": ([V], None), "getformat": (["0", V], None), "clip": ([V, "0:01", "0:03"], None), "record": ([V, "10"], None),
     "playlist": ([V], None), "batch": ([V, f"{W}/img/big.png"], None), "direct": ([V], None), "doc": ([V], None),
     "gif": ([V], None),
     # audio

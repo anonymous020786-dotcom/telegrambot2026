@@ -27,6 +27,11 @@ with the matching section below.
 - **RTMP** (`rtmp://`) downloads: `rtmpdump` is now in the image.
 - Preview cards for direct video file links show the real resolution, codecs, frame rate and duration (ffprobe
   reads the file header).
+- **WebRTC live-stream recording.** WHEP playback links (the open WebRTC viewing standard used by Cloudflare
+  Stream, Dolby/Millicast, MediaMTX, Janus and others) are recorded directly; pages whose live player uses WebRTC
+  are recorded from the player by the headless browser. New `/record <url> [seconds|1:30] [token=…]` (default
+  `WEBRTC_RECORD_SECONDS`, up to `WEBRTC_MAX_RECORD_SECONDS`), a 🔴 progress bar in seconds, Cancel support, and
+  MP4 output at the stream's own resolution. Recordings are never served from the cache.
 - **`/sitecheck <category>`**: admins test a whole category from Telegram (`social`, `video`, `audio`, `news_tv`,
   `sports`, `education`, `files_cloud`, `adult`, or `all` ~200 sites). Long reports list problems first, span
   several messages, and mark sites this server can't reach at all (🚫, fix with `PROXY`) apart from broken ones.
