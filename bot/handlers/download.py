@@ -198,6 +198,37 @@ async def clip(update: Update, context: Ctx, user: User) -> None:
     await enqueue(update, context, user, url, preset=preset)
 
 
+@command(
+    "record",
+    "download",
+    "Record a WebRTC live stream (a WHEP link, or a page whose live player uses WebRTC)",
+    "/record <url> [seconds|1:30] [token=…]",
+)
+async def record(update: Update, context: Ctx, user: User) -> None:
+    url = url_from(update, context)
+    if not url:
+        await need_url(update, "record")
+        return
+    s = svc(context)
+    limit = s.settings.webrtc_max_record_seconds
+    seconds = s.settings.webrtc_record_seconds
+    options: dict = {}
+    for arg in non_url_args(context):
+        if arg.lower().startswith("token="):
+            options["token"] = arg.split("=", 1)[1]  # a WHEP viewer token, for streams that require one
+            continue
+        try:
+            seconds = int(parse_timestamp(arg))
+        except ValueError:
+            await reply(update, usage("record"))
+            return
+    if not 5 <= seconds <= limit:
+        await reply(update, f"⏱ Record between 5 seconds and {limit // 60} minutes.")
+        return
+    options["seconds"] = seconds
+    await enqueue(update, context, user, url, kind="record", options=options)
+
+
 @command("playlist", "download", "Download a playlist or channel (optionally a range)", "/playlist <url> [1-10] [mp3]")
 async def playlist(update: Update, context: Ctx, user: User) -> None:
     url = url_from(update, context)

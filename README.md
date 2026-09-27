@@ -3,7 +3,7 @@
 [![CI](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml/badge.svg)](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml)
 
 A **private** Telegram bot, written in Python, that downloads **public videos, audio and images from almost any
-website**, in any available format or quality. It has **168 commands**, 131 for users and 37 for admins, plus
+website**, in any available format or quality. It has **169 commands**, 132 for users and 37 for admins, plus
 button menus throughout.
 
 - **Videos and audio from 1,800+ sites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp): every resolution from
@@ -61,8 +61,12 @@ None of this can work for DRM-encrypted streams.
 **Formats:** HLS (`.m3u8`, with MPEG-TS or fMP4/CMAF chunks, including adaptive multi-quality playlists), MPEG-DASH
 (`.mpd`), Microsoft Smooth Streaming (`.ism`), RTMP, and direct MP4/WebM/MKV/MOV/FLV/TS files, in every quality
 the source offers, with H.264, H.265/HEVC, AV1 or VP9 video. You choose the output container (MP4, MKV, WebM or MOV
-with `/setformat`) and the preferred codec (`/setcodec`). WebRTC streams (video calls, some ultra-low-latency live
-shows) are peer-to-peer and have no downloadable URL.
+with `/setformat`) and the preferred codec (`/setcodec`).
+
+**WebRTC live streams** have no file to download, so the bot records them as a viewer: send a WHEP playback link
+(Cloudflare Stream, Dolby/Millicast, MediaMTX, Janus, Ant Media…) or use `/record <url> [seconds]` on a page whose
+live player uses WebRTC, and it records up to 30 minutes into an MP4 at the stream's own resolution. Private video
+calls (Zoom, Meet) have no public stream and are out of scope.
 
 **Integrating a new site without code changes:** an admin sends `/pagedebug <url>` to see what the bot finds on
 the page (extractor, adult label, every stream candidate), along with the page's HTML. If the stream is in the HTML
@@ -113,7 +117,7 @@ security and releasing. What changed in each version is in **[CHANGELOG.md](CHAN
 | `/watch CHANNEL_URL` | New uploads sent to you automatically |
 | `/schedule 18:30 URL` | The download starts at 18:30 your time |
 
-The full list of all 168 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
+The full list of all 169 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
 
 ## Configuration
 

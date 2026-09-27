@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # capture the video manifests/files the player requests. Needs the Chromium that the Docker image installs.
     browser_fallback: bool = True
     browser_timeout_seconds: float = 45.0
+    # WebRTC live streams (WHEP links, pages with a WebRTC player) have no end: record this long by default.
+    webrtc_record_seconds: int = 60
+    webrtc_max_record_seconds: int = 1800  # upper limit for /record <url> <seconds>
 
     # --- Content policy ------------------------------------------------------------
     adult_content: str = "off"  # off | optin (adults confirm 18+ with /setadult); admins can change it live
