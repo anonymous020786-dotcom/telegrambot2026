@@ -27,6 +27,9 @@ with the matching section below.
 - **RTMP** (`rtmp://`) downloads: `rtmpdump` is now in the image.
 - Preview cards for direct video file links show the real resolution, codecs, frame rate and duration (ffprobe
   reads the file header).
+- **`/sitecheck <category>`**: admins test a whole category from Telegram (`social`, `video`, `audio`, `news_tv`,
+  `sports`, `education`, `files_cloud`, `adult`, or `all` ~200 sites). Long reports list problems first, span
+  several messages, and mark sites this server can't reach at all (🚫, fix with `PROXY`) apart from broken ones.
 - `scripts/format_check.py` downloads public test streams (HLS with TS and fMP4/CMAF chunks, DASH, Smooth
   Streaming, H.264/H.265/AV1/VP9 files, MKV/WebM/MOV) through the bot's download code.
 - `scripts/link_check.py URL…` checks real links the way the bot handles them (yt-dlp, the page scan, a browser).

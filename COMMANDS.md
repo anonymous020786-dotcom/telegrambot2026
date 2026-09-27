@@ -211,7 +211,7 @@ the file with the command as its caption.
 | `/unblocksite` | Remove a domain from the blocklist | `/unblocksite <domain>` |
 | `/blockedsites` | Domains that are blocked | `/blockedsites` |
 | `/cookies` | Use your own logged-in cookies for sites that need a login (reply to cookies.txt) | `/cookies [clear]  (reply to a cookies.txt file)` |
-| `/sitecheck` | Test right now which major platforms this server can read | `/sitecheck [url …]` |
+| `/sitecheck` | Test right now which sites this server can read: the major platforms, a category, all ~200, or links | `/sitecheck [social\|video\|audio\|news_tv\|sports\|education\|files_cloud\|adult\|all] [url …]` |
 | `/pagedebug` | Show what the bot can find on a page (streams, extractor, adult label) + its HTML | `/pagedebug <url>` |
 | `/siterule` | Custom stream-extraction rules for sites without built-in support | `/siterule list \| add <domain> <regex> \| remove <domain> [n] \| test <url>` |
 | `/admin` | Admin panel | `/admin` |

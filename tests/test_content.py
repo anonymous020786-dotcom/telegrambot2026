@@ -333,3 +333,23 @@ async def test_uploaded_cookies_always_load_in_ytdlp(services, tmp_path):
     assert [c.name for c in jar] == ["sessionid"]
     already = "# Netscape HTTP Cookie File\n.x.test\tTRUE\t/\tTRUE\t0\ta\tb\n"
     assert normalize_cookie_file(already) == already  # never doubled
+
+
+def test_sitecheck_categories_paging_and_blocked_sites():
+    from bot.handlers.content import chunk_lines
+    from bot.services.sitecheck import CATEGORIES, category_targets, network_blocked
+
+    assert {"social", "video", "audio", "news_tv", "sports", "education", "files_cloud", "adult"} <= set(CATEGORIES)
+    social = category_targets(["social"])
+    assert len(social) >= 10 and all(url.startswith("http") for _, url in social)
+    assert "ShareChat" in {label for label, _ in social}  # our own plugins are included
+    assert len(category_targets(["all"])) > len(social)
+    assert category_targets(["nonsense"]) == []
+
+    assert network_blocked("Unable to download webpage: Failed to perform, curl: (7) Failed to connect to x.com")
+    assert network_blocked("Couldn't reach the site (network error). Try again later.")
+    assert not network_blocked("This video is only available for registered users")
+
+    pages = chunk_lines([f"line {i} " + "x" * 90 for i in range(200)], limit=3800)
+    assert len(pages) > 1 and all(len(p) <= 3800 for p in pages)
+    assert sum(p.count("\n") + 1 for p in pages) == 200
