@@ -7,3 +7,4 @@ data/
 .pytest_cache/
 .ruff_cache/
 .claude/settings.local.json
+.e2e-*.log

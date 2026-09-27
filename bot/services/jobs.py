@@ -42,12 +42,16 @@ from .downloader import (
     Preset,
     friendly_error,
     is_transient,
+    rewrap,
     supported_extractor,
 )
 from .images import FoundImage, ImageService
 from .pagevideo import find_videos, page_is_adult
 from .policy import ADULT_BLOCKED_MESSAGE, Policy
 from .siterules import SiteRules
+from .torrent import TorrentError, choose, parse_torrent
+from .torrent import download as torrent_download
+from .torrent import fetch_metadata as torrent_metadata
 from .webrtc import WebRTCError, looks_like_whep, record_whep
 
 log = logging.getLogger(__name__)
@@ -69,7 +73,7 @@ class Job:
     user_id: int
     chat_id: int
     url: str
-    kind: str = "media"  # media | images | gallery | imagelist | record
+    kind: str = "media"  # media | images | gallery | imagelist | record | torrent
     preset: Preset = field(default_factory=Preset)
     options: dict[str, Any] = field(default_factory=dict)
     priority: int = 5
@@ -101,7 +105,11 @@ class Job:
         return self.downloaded / self.total if self.total else 0.0
 
     def describe(self) -> str:
-        what = self.preset.label() if self.kind == "media" else {"record": "live recording"}.get(self.kind, self.kind)
+        what = (
+            self.preset.label()
+            if self.kind == "media"
+            else {"record": "live recording", "torrent": "torrent"}.get(self.kind, self.kind)
+        )
         return f"<code>{self.id}</code> · {what} · {esc(truncate(self.title or domain_of(self.url), 40))}"
 
 
@@ -127,9 +135,13 @@ def progress_text(job: Job) -> str:
     what = (
         job.preset.label()
         if job.kind == "media"
-        else {"images": "images", "gallery": "gallery", "imagelist": "images", "record": "live recording"}.get(
-            job.kind, job.kind
-        )
+        else {
+            "images": "images",
+            "gallery": "gallery",
+            "imagelist": "images",
+            "record": "live recording",
+            "torrent": "torrent",
+        }.get(job.kind, job.kind)
     )
     lines = [f"{icon} <b>{phase}</b> · {esc(what)}", f"<b>{esc(truncate(job.title or job.url, 90))}</b>"]
     if job.resumed and job.phase == "queued":
@@ -614,6 +626,8 @@ class JobManager:
                 job.kind = "record"  # a WHEP link is a WebRTC live stream: record it
             if job.kind == "record":
                 used_link = await self._run_record(job, user, out_dir)
+            elif job.kind == "torrent":
+                used_link = await self._run_torrent(job, user, out_dir)
             elif job.kind == "media":
                 try:
                     used_link = await self._run_media(job, user, out_dir)
@@ -786,6 +800,55 @@ class JobManager:
                 "an admin can inspect it with /pagedebug and add a /siterule."
             )
         raise last
+
+    async def _run_torrent(self, job: Job, user: User, out_dir: Path) -> bool:
+        """Fetch the chosen video files of a torrent (magnet link, .torrent URL or uploaded .torrent) and send them."""
+        if not self.settings.torrents_allowed(user.is_admin):
+            raise DownloadError("Torrent downloads are turned off for your account.")
+        source = job.options.get("torrent_file") or job.url
+        job.phase = "downloading"
+        try:
+            torrent = await torrent_metadata(
+                source, out_dir / ".meta", self.settings.user_agent, allow_private=self.settings.allow_private_urls
+            )
+            info = parse_torrent(torrent)
+            files = choose(info, job.options.get("files") or "auto")
+        except TorrentError as exc:
+            raise DownloadError(str(exc)) from exc
+        size = sum(f.size for f in files)
+        if size > self.settings.max_download_mb * 1024 * 1024:
+            raise DownloadError(
+                f"The chosen files are {human_size(size)}, over this bot's {self.settings.max_download_mb} MB limit."
+            )
+        job.title = job.title or (Path(files[0].path).stem if len(files) == 1 else info.name)
+        job.total = size
+
+        def progress(stats: dict) -> None:
+            job.phase = "downloading"
+            job.downloaded, job.total = stats["downloaded"], stats["total"] or size
+            job.speed, job.eta = stats["speed"], stats["eta"]
+
+        async def fetch() -> tuple[dict[str, Any] | None, list[Path]]:
+            try:
+                paths = await torrent_download(
+                    torrent,
+                    files,
+                    out_dir / "files",
+                    progress=progress,
+                    cancelled=lambda: job.cancelled,
+                    stall_timeout=self.settings.torrent_stall_seconds,
+                    upload_limit_kb=self.settings.torrent_upload_limit_kb,
+                )
+            except TorrentError as exc:
+                raise DownloadError(str(exc)) from exc
+            if job.cancelled:
+                raise Cancelled()
+            if job.preset.container in ("mp4", "mov"):
+                job.phase = "processing"
+                paths = [await asyncio.to_thread(rewrap, p, job.preset.container) for p in paths]
+            return {"title": job.title}, paths
+
+        return await self._run_media(job, user, out_dir, recorder=fetch)
 
     async def _run_record(self, job: Job, user: User, out_dir: Path, page_checked: bool = False) -> bool:
         """Record a WebRTC live stream: a WHEP link directly, anything else through the page's own player."""

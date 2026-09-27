@@ -351,6 +351,11 @@ def quick_keyboard(kind: str) -> InlineKeyboardMarkup:
 
 async def on_media_message(update: Update, context: Ctx, user: User) -> None:
     msg = update.effective_message
+    if msg.document and (msg.document.file_name or "").lower().endswith(".torrent"):
+        from .torrent import on_torrent_document
+
+        await on_torrent_document(update, context, user)
+        return
     if msg.photo or (msg.document and (msg.document.mime_type or "").startswith("image/")):
         kind = "image"
     elif msg.audio or msg.voice:

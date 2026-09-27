@@ -7,10 +7,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DATA_DIR=/data \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# ffmpeg merges/converts media; rtmpdump fetches rtmp:// streams; fonts are used by some ffmpeg filters;
-# tini reaps child processes.
+# ffmpeg merges/converts media; rtmpdump fetches rtmp:// streams; aria2 downloads torrents;
+# fonts are used by some ffmpeg filters; tini reaps child processes.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg rtmpdump fonts-dejavu-core ca-certificates tini \
+    && apt-get install -y --no-install-recommends ffmpeg rtmpdump aria2 fonts-dejavu-core ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

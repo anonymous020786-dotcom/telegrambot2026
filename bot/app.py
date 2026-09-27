@@ -52,6 +52,7 @@ def load_handlers() -> None:
         library,
         settings,
         tools,
+        torrent,
         utilities,
         watch,
     )
@@ -163,7 +164,7 @@ async def on_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    from .handlers import admin, content, download, general, inline, library, settings, tools
+    from .handlers import admin, content, download, general, inline, library, settings, tools, torrent
 
     query = update.callback_query
     data = query.data or ""
@@ -190,6 +191,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await settings.on_settings_button(update, context, user)
     elif prefix == "tool":
         await tools.on_tool_button(update, context, user)
+    elif prefix == "tor":
+        await torrent.on_torrent_button(update, context, user)
     elif prefix == "adm":
         await admin.on_admin_button(update, context, user)
     elif prefix == "access":
