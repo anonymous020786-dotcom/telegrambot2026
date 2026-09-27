@@ -12,13 +12,14 @@ from telegram.error import BadRequest
 
 from ..db import User
 from ..registry import command
-from ..services.downloader import AUDIO_FORMATS, CONTAINERS, QUALITIES
+from ..services.downloader import AUDIO_FORMATS, CODECS, CONTAINERS, QUALITIES
 from ..utils import esc
 from .common import Ctx, arg_text, reply, svc
 
 CHOICES: dict[str, tuple[Any, ...]] = {
     "quality": QUALITIES,
     "container": CONTAINERS,
+    "codec": CODECS,
     "audio_format": AUDIO_FORMATS,
     "audio_bitrate": (128, 160, 192, 256, 320),
     "delivery": ("auto", "telegram", "split", "link", "s3"),
@@ -29,6 +30,7 @@ TOGGLES = ("as_document", "subs", "embed_thumbnail", "embed_metadata")
 LABELS = {
     "quality": "🎞 Quality",
     "container": "📦 Container",
+    "codec": "🎬 Codec",
     "audio_format": "🎵 Audio",
     "audio_bitrate": "🎚 Bitrate",
     "delivery": "🚚 Big files",
@@ -118,9 +120,19 @@ async def setquality(update: Update, context: Ctx, user: User) -> None:
     await _choice(update, context, user, "quality", "setquality")
 
 
-@command("setformat", "settings", "Video container: mp4, mkv or webm", "/setformat <mp4|mkv|webm>")
+@command("setformat", "settings", "Video container: mp4, mkv, webm or mov", "/setformat <mp4|mkv|webm|mov>")
 async def setformat(update: Update, context: Ctx, user: User) -> None:
     await _choice(update, context, user, "container", "setformat")
+
+
+@command(
+    "setcodec",
+    "settings",
+    "Preferred video codec: auto, h264 (plays everywhere), h265, av1 or vp9 (smaller files)",
+    "/setcodec <auto|h264|h265|av1|vp9>",
+)
+async def setcodec(update: Update, context: Ctx, user: User) -> None:
+    await _choice(update, context, user, "codec", "setcodec")
 
 
 @command("setaudio", "settings", "Default audio format", "/setaudio <mp3|m4a|opus|flac|wav|aac|ogg>")

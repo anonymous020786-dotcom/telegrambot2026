@@ -33,6 +33,7 @@ from yt_dlp.utils import DownloadCancelled, DownloadError
 from ..config import Settings
 from ..db import Database, User
 from ..utils import cache_key, domain_of, esc, human_duration, human_size, progress_bar, truncate
+from .browser import sniff
 from .delivery import Delivery, make_zip
 from .downloader import (
     AdultBlocked,
@@ -727,11 +728,6 @@ class JobManager:
         ruled = await self.site_rules.candidates(html, final_url)
         generic = find_videos(html, final_url, embed_supported=lambda u: supported_extractor(u) is not None)
         candidates = ruled + [c for c in generic if c.url not in {r.url for r in ruled}]
-        if not candidates:
-            raise DownloadError(
-                "No downloadable video stream was found on this page. It may be encrypted or assembled by scripts; "
-                "an admin can inspect it with /pagedebug and add a /siterule."
-            )
         last: Exception = original
         for candidate in candidates[:4]:
             try:
@@ -739,6 +735,32 @@ class JobManager:
             except DownloadError as exc:
                 last = exc
                 shutil.rmtree(out_dir, ignore_errors=True)
+        # Script-built pages (SPAs): let a real browser load the player and capture the stream it requests.
+        if self.settings.browser_fallback:
+            sniffed = await sniff(
+                job.url,
+                self.settings.user_agent,
+                timeout=self.settings.browser_timeout_seconds,
+                allow_private=self.settings.allow_private_urls,
+                proxy=self.settings.proxy,
+            )
+            if sniffed.html and page_is_adult(sniffed.html) and not allow_adult:
+                raise AdultBlocked()
+            tried = {c.url for c in candidates[:4]}
+            for candidate in [c for c in sniffed.candidates if c.url not in tried][:4]:
+                try:
+                    referer = sniffed.final_url or final_url
+                    return await self._run_media(job, user, out_dir, source_url=candidate.url, referer=referer)
+                except DownloadError as exc:
+                    last = exc
+                    shutil.rmtree(out_dir, ignore_errors=True)
+            candidates += sniffed.candidates
+        if not candidates:
+            how = " even after loading it in a browser" if self.settings.browser_fallback else ""
+            raise DownloadError(
+                f"No downloadable video stream was found on this page{how}. It may be DRM-encrypted or members-only; "
+                "an admin can inspect it with /pagedebug and add a /siterule."
+            )
         raise last
 
     async def _run_media(

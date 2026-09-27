@@ -65,7 +65,7 @@ CASES: dict[str, tuple[list[str], str | None]] = {
     "fav": (["1"], None), "unfav": (["1"], None), "find": (["sample"], None), "clearhistory": ([], None),
     "exporthistory": ([], None),
     # settings
-    "settings": ([], None), "setquality": (["720"], None), "setformat": (["mkv"], None),
+    "settings": ([], None), "setquality": (["720"], None), "setformat": (["mkv"], None), "setcodec": (["h264"], None),
     "setaudio": (["m4a"], None), "setbitrate": (["256"], None), "setdelivery": (["split"], None),
     "setcaption": (["minimal"], None), "setplaylistlimit": (["10"], None), "setdoc": (["off"], None),
     "setsubs": (["off"], None), "setthumb": (["on"], None), "setmeta": (["on"], None), "setsublang": (["es"], None),

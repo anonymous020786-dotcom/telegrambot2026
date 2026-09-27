@@ -1,15 +1,17 @@
-"""Check real links the way the bot handles them: yt-dlp (with our plugins) first, then the page-video fallback.
+"""Check real links the way the bot handles them: yt-dlp (with our plugins), the page-video scan, then a browser.
 
 Run inside the bot container:  python -m scripts.link_check URL [URL ...]
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import httpx
 import yt_dlp
 
+from bot.services.browser import sniff
 from bot.services.downloader import load_all_plugins, supported_extractor
 from bot.services.pagevideo import find_videos, page_is_adult
 
@@ -62,7 +64,17 @@ def check(url: str) -> str:
             return f"OK  page-fallback[{c.source}/{c.kind}] {r['best']} · {r['formats']} fmts{adult} · {c.url[:90]}"
         except Exception:  # noqa: BLE001 - try the next candidate
             continue
-    return f"FAIL {len(cands)} page candidates, none playable{adult}; yt-dlp: {first}"
+    tried = {c.url for c in cands[:4]}
+    sniffed = asyncio.run(sniff(url, UA, timeout=45))
+    for c in [c for c in sniffed.candidates if c.url not in tried][:4]:
+        try:
+            r = probe(c.url, referer=sniffed.final_url or final)
+            return f"OK  browser[{c.kind}] {r['best']} · {r['formats']} fmts{adult} · {c.url[:90]}"
+        except Exception:  # noqa: BLE001 - try the next candidate
+            continue
+    return (
+        f"FAIL {len(cands)} page + {len(sniffed.candidates)} browser candidates, none playable{adult}; yt-dlp: {first}"
+    )
 
 
 def main() -> None:

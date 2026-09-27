@@ -3,7 +3,7 @@
 [![CI](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml/badge.svg)](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml)
 
 A **private** Telegram bot, written in Python, that downloads **public videos, audio and images from almost any
-website**, in any available format or quality. It has **167 commands**, 130 for users and 37 for admins, plus
+website**, in any available format or quality. It has **168 commands**, 131 for users and 37 for admins, plus
 button menus throughout.
 
 - **Videos and audio from 1,800+ sites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp): every resolution from
@@ -49,13 +49,20 @@ button menus throughout.
 | **Adult sites** hosting legal content | ⚙️ Opt-in | **61 sites with dedicated extractors** (xHamster, PornHub, XVideos, XNXX, YouPorn, RedTube, SpankBang, Eporner, Beeg, TNAFlix, ThisVid, RedGifs, Chaturbate, Stripchat…; `/sites adult` lists them all). Other sites usually work through the page-video fallback (below). Off by default: an admin enables it with `/adult optin` (or `ADULT_CONTENT=optin`), then each user confirms they are 18+ with `/setadult`. Media rated 18+ by the site, and pages that label themselves adult (RTA tag), are refused for everyone else, including the preview thumbnail. |
 | **Subscription OTT and streaming** (Netflix, Prime Video, Disney+, Hotstar Premium, Max, Hulu, Apple TV+, Spotify…) | ❌ | These services encrypt their streams with DRM. The bot **does not bypass DRM** and tells the user why. DRM-free clips, trailers and free catch-up TV that yt-dlp supports do work. |
 
-\* Threads is handled by gallery-dl rather than yt-dlp.
+\* Threads isn't supported yet: neither yt-dlp nor gallery-dl handles it, and logged-out visitors get no post data.
 
 **Any other website:** when yt-dlp has no extractor for a site, the bot reads the page itself. It looks for
 `<video>`/`<source>` tags, `og:video`, JSON-LD `VideoObject`, links to MP4/WebM/HLS/DASH files, stream URLs
 inside the player's scripts, and embedded players that yt-dlp supports. It then downloads the best stream it
-finds, sending the page as Referer. This works for most sites that serve an unencrypted stream. It can't work for
-DRM-encrypted streams, or for sites that build the stream URL with obfuscated code at play time.
+finds, sending the page as Referer. If the page builds its player with JavaScript (React/Vue/Angular single-page
+apps), the bot opens it in headless Chromium, presses play and downloads the manifest or file the player requests.
+None of this can work for DRM-encrypted streams.
+
+**Formats:** HLS (`.m3u8`, with MPEG-TS or fMP4/CMAF chunks, including adaptive multi-quality playlists), MPEG-DASH
+(`.mpd`), Microsoft Smooth Streaming (`.ism`), RTMP, and direct MP4/WebM/MKV/MOV/FLV/TS files, in every quality
+the source offers, with H.264, H.265/HEVC, AV1 or VP9 video. You choose the output container (MP4, MKV, WebM or MOV
+with `/setformat`) and the preferred codec (`/setcodec`). WebRTC streams (video calls, some ultra-low-latency live
+shows) are peer-to-peer and have no downloadable URL.
 
 **Integrating a new site without code changes:** an admin sends `/pagedebug <url>` to see what the bot finds on
 the page (extractor, adult label, every stream candidate), along with the page's HTML. If the stream is in the HTML
@@ -106,7 +113,7 @@ security and releasing. What changed in each version is in **[CHANGELOG.md](CHAN
 | `/watch CHANNEL_URL` | New uploads sent to you automatically |
 | `/schedule 18:30 URL` | The download starts at 18:30 your time |
 
-The full list of all 167 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
+The full list of all 168 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
 
 ## Configuration
 

@@ -76,6 +76,7 @@ def preset_for(user: User, **overrides: Any) -> Preset:
     base = Preset(
         quality=str(user.pref("quality")),
         container=user.pref("container"),
+        codec=user.pref("codec"),
         audio_format=user.pref("audio_format"),
         audio_bitrate=int(user.pref("audio_bitrate")),
         sub_lang=user.pref("sub_lang"),
