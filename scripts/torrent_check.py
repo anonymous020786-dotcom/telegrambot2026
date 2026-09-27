@@ -35,7 +35,9 @@ async def main() -> None:
     await services.db.connect()
     bot = FakeBot()
     services.jobs.start(bot)
-    user = await services.db.upsert_user(1, "admin", "Admin")
+    await services.db.upsert_user(1, "admin", "Admin")
+    await services.db.set_role(1, "admin")  # what the bot does for ADMIN_IDS on their first message
+    user = await services.db.get_user(1)
     try:
         for name, url, files in CASES:
             job = Job(user_id=1, chat_id=1, url=url, kind="torrent", options={"files": files})
