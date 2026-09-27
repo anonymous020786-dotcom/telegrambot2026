@@ -81,6 +81,10 @@ def test_domain_rules():
         "https://www.pinterest.com/pin/123456789012345678/",
         "https://soundcloud.com/artist/track-name",
         "https://bsky.app/profile/someone.bsky.social/post/3l4omssdl632g",
+        # our own plugins (yt_dlp_plugins/extractor/)
+        "https://sharechat.com/post/m3QqPD0",
+        "https://mojapp.in/@moj/video/3098969342",
+        "https://timesofindia.indiatimes.com/videos/education/choosing-auckland/videoshow/126203083.cms",
     ],
 )
 def test_major_social_platforms_have_dedicated_extractors(url):
