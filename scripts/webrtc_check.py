@@ -14,8 +14,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from bot.config import Settings
 from bot.app import build_services
+from bot.config import Settings
 from bot.services.jobs import Job
 from tests.conftest import FakeBot
 
@@ -49,13 +49,10 @@ async def run_job(services, bot: FakeBot, user, url: str, kind: str, options: di
 
 
 async def main() -> None:
-    server = subprocess.Popen([os.environ["MEDIAMTX"]], cwd=Path(os.environ["MEDIAMTX"]).parent,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # fmt: skip
-    time.sleep(1)
-    publisher = subprocess.Popen(PUBLISH)
-    time.sleep(3)
     data = Path(tempfile.mkdtemp())
-    settings = Settings(bot_token="1:x", admin_ids=[1], data_dir=data, allow_private_urls=True, browser_timeout_seconds=30)
+    settings = Settings(
+        bot_token="1:x", admin_ids=[1], data_dir=data, allow_private_urls=True, browser_timeout_seconds=30
+    )
     settings.ensure_dirs()
     services = build_services(settings)
     await services.db.connect()
@@ -74,9 +71,22 @@ async def main() -> None:
     finally:
         await services.jobs.stop()
         await services.db.close()
-        publisher.kill()
-        server.kill()
+
+
+def serve_live_stream() -> list[subprocess.Popen]:
+    """Start MediaMTX and publish a live H.264/Opus test pattern to it."""
+    binary = Path(os.environ["MEDIAMTX"])
+    server = subprocess.Popen([str(binary)], cwd=binary.parent, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(1)
+    publisher = subprocess.Popen(PUBLISH)
+    time.sleep(3)
+    return [server, publisher]
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    processes = serve_live_stream()
+    try:
+        asyncio.run(main())
+    finally:
+        for process in processes:
+            process.kill()

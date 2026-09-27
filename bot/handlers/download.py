@@ -610,6 +610,13 @@ async def show_card(update: Update, context: Ctx, url: str, edit_message=None) -
 async def on_link_message(update: Update, context: Ctx, user: User) -> None:
     """Plain messages containing links: one link → preview card; several → bulk buttons."""
     msg = update.effective_message
+    from ..services.torrent import MAGNET_RE
+
+    if magnet := MAGNET_RE.search(msg.text or msg.caption or ""):
+        from .torrent import on_magnet_message
+
+        await on_magnet_message(update, context, user, magnet.group(0))
+        return
     urls = extract_urls(msg.text or msg.caption or "")
     for ent in (msg.entities or []) + (msg.caption_entities or []):
         if ent.url and ent.url not in urls:

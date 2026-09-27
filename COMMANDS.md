@@ -1,6 +1,6 @@
 # Command reference
 
-169 commands: 132 for users and 37 for admins.
+170 commands: 133 for users and 37 for admins.
 This file is generated from the command registry; run `python -m scripts.gen_commands` after changes.
 
 Tips: paste any link to get a preview with buttons. Media tools work when you reply to a file, or send
@@ -21,7 +21,7 @@ the file with the command as its caption.
 | `/feedback` | Send a message to the bot owner | `/feedback <message>` |
 | `/id` | Show your Telegram user ID and this chat's ID | `/id` |
 
-## ⬇️ Download (19)
+## ⬇️ Download (20)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
@@ -44,6 +44,7 @@ the file with the command as its caption.
 | `/direct` | Get direct media URLs (to stream or use elsewhere) | `/direct <url>` |
 | `/doc` | Download and send as an uncompressed file | `/doc <url>` |
 | `/gif` | Turn a video link into a GIF (first 30 s) | `/gif <url>` |
+| `/torrent` | Download videos from a torrent (magnet link, .torrent link, or reply to a .torrent file) | `/torrent <magnet\|link> [auto\|all\|list\|1,3]` |
 
 ## 🎵 Audio (8)
 

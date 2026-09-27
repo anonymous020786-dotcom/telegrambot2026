@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # WebRTC live streams (WHEP links, pages with a WebRTC player) have no end: record this long by default.
     webrtc_record_seconds: int = 60
     webrtc_max_record_seconds: int = 1800  # upper limit for /record <url> <seconds>
+    # BitTorrent (magnet links, .torrent files): off | admins | all. Downloading a torrent also uploads its pieces
+    # to other peers, so this is admins-only by default; seeding stops when the download completes.
+    torrents: str = "admins"
+    torrent_stall_seconds: int = 300  # give up when no peer has sent data for this long
+    torrent_upload_limit_kb: int = 100  # cap on sharing while downloading (KiB/s)
 
     # --- Content policy ------------------------------------------------------------
     adult_content: str = "off"  # off | optin (adults confirm 18+ with /setadult); admins can change it live
@@ -103,6 +108,15 @@ class Settings(BaseSettings):
     def _adult_mode(cls, value: object) -> object:
         v = str(value or "off").strip().lower()
         return v if v in ("off", "optin") else "off"
+
+    @field_validator("torrents", mode="before")
+    @classmethod
+    def _torrent_mode(cls, value: object) -> object:
+        v = str(value or "admins").strip().lower()
+        return v if v in ("off", "admins", "all") else "admins"
+
+    def torrents_allowed(self, is_admin: bool) -> bool:
+        return self.torrents == "all" or (self.torrents == "admins" and is_admin)
 
     @field_validator("bot_api_base_url", "bot_api_base_file_url", "link_base_url", "proxy", "s3_bucket", mode="before")
     @classmethod

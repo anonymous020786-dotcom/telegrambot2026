@@ -3,7 +3,7 @@
 [![CI](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml/badge.svg)](https://github.com/anonymous020786-dotcom/telegrambot2026/actions/workflows/ci.yml)
 
 A **private** Telegram bot, written in Python, that downloads **public videos, audio and images from almost any
-website**, in any available format or quality. It has **169 commands**, 132 for users and 37 for admins, plus
+website**, in any available format or quality. It has **170 commands**, 133 for users and 37 for admins, plus
 button menus throughout.
 
 - **Videos and audio from 1,800+ sites** via [yt-dlp](https://github.com/yt-dlp/yt-dlp): every resolution from
@@ -63,6 +63,12 @@ None of this can work for DRM-encrypted streams.
 the source offers, with H.264, H.265/HEVC, AV1 or VP9 video. You choose the output container (MP4, MKV, WebM or MOV
 with `/setformat`) and the preferred codec (`/setcodec`).
 
+**Torrents:** paste a magnet link, send a `.torrent` file, or use `/torrent <magnet|link> [auto|all|list|1,3]`.
+Only the video files are fetched (the largest by default), with live progress, and seeding stops when the download
+completes. Torrents are admins-only by default (`TORRENTS=off|admins|all`): downloading a torrent also uploads its
+pieces to other people, so use it only for material you're allowed to share. Peer traffic doesn't go through
+`PROXY`.
+
 **WebRTC live streams** have no file to download, so the bot records them as a viewer: send a WHEP playback link
 (Cloudflare Stream, Dolby/Millicast, MediaMTX, Janus, Ant Media…) or use `/record <url> [seconds]` on a page whose
 live player uses WebRTC, and it records up to 30 minutes into an MP4 at the stream's own resolution. Private video
@@ -117,7 +123,7 @@ security and releasing. What changed in each version is in **[CHANGELOG.md](CHAN
 | `/watch CHANNEL_URL` | New uploads sent to you automatically |
 | `/schedule 18:30 URL` | The download starts at 18:30 your time |
 
-The full list of all 169 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
+The full list of all 170 commands is in **[COMMANDS.md](COMMANDS.md)**, which is generated from the code.
 
 ## Configuration
 

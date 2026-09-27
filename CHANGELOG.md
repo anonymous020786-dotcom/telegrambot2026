@@ -27,6 +27,11 @@ with the matching section below.
 - **RTMP** (`rtmp://`) downloads: `rtmpdump` is now in the image.
 - Preview cards for direct video file links show the real resolution, codecs, frame rate and duration (ffprobe
   reads the file header).
+- **Torrent downloads** (aria2): magnet links pasted as messages, `.torrent` files sent to the bot (with "largest
+  video / all videos" buttons), and `/torrent <magnet|link> [auto|all|list|1,3]`. Only video files are fetched
+  ("sample" clips skipped), with a live progress bar, Cancel, size limits and MP4 rewrapping. Seeding stops when the
+  download completes, uploads are capped (`TORRENT_UPLOAD_LIMIT_KB`), stalled torrents give up after
+  `TORRENT_STALL_SECONDS`, and local peer discovery is off. Admins-only by default (`TORRENTS=off|admins|all`).
 - **WebRTC live-stream recording.** WHEP playback links (the open WebRTC viewing standard used by Cloudflare
   Stream, Dolby/Millicast, MediaMTX, Janus and others) are recorded directly; pages whose live player uses WebRTC
   are recorded from the player by the headless browser. New `/record <url> [seconds|1:30] [token=…]` (default
