@@ -1,6 +1,6 @@
 # Command reference
 
-167 commands: 130 for users and 37 for admins.
+168 commands: 131 for users and 37 for admins.
 This file is generated from the command registry; run `python -m scripts.gen_commands` after changes.
 
 Tips: paste any link to get a preview with buttons. Media tools work when you reply to a file, or send
@@ -143,13 +143,14 @@ the file with the command as its caption.
 | `/clearhistory` | Delete your history (favorites kept unless 'all') | `/clearhistory [all]` |
 | `/exporthistory` | Download your history as a CSV file | `/exporthistory` |
 
-## ⚙️ Settings (17)
+## ⚙️ Settings (18)
 
 | Command | What it does | Usage |
 | --- | --- | --- |
 | `/settings` | Open the settings menu | `/settings` |
 | `/setquality` | Default video quality | `/setquality <best\|1080\|720\|480\|…\|worst>` |
-| `/setformat` | Video container: mp4, mkv or webm | `/setformat <mp4\|mkv\|webm>` |
+| `/setformat` | Video container: mp4, mkv, webm or mov | `/setformat <mp4\|mkv\|webm\|mov>` |
+| `/setcodec` | Preferred video codec: auto, h264 (plays everywhere), h265, av1 or vp9 (smaller files) | `/setcodec <auto\|h264\|h265\|av1\|vp9>` |
 | `/setaudio` | Default audio format | `/setaudio <mp3\|m4a\|opus\|flac\|wav\|aac\|ogg>` |
 | `/setbitrate` | Audio bitrate for MP3/M4A/Opus | `/setbitrate <128\|160\|192\|256\|320>` |
 | `/setdelivery` | How to send files over the Telegram limit | `/setdelivery <auto\|telegram\|split\|link\|s3>` |
@@ -210,7 +211,7 @@ the file with the command as its caption.
 | `/unblocksite` | Remove a domain from the blocklist | `/unblocksite <domain>` |
 | `/blockedsites` | Domains that are blocked | `/blockedsites` |
 | `/cookies` | Use your own logged-in cookies for sites that need a login (reply to cookies.txt) | `/cookies [clear]  (reply to a cookies.txt file)` |
-| `/sitecheck` | Test right now which major platforms this server can read | `/sitecheck [url …]` |
+| `/sitecheck` | Test right now which sites this server can read: the major platforms, a category, all ~200, or links | `/sitecheck [social\|video\|audio\|news_tv\|sports\|education\|files_cloud\|adult\|all] [url …]` |
 | `/pagedebug` | Show what the bot can find on a page (streams, extractor, adult label) + its HTML | `/pagedebug <url>` |
 | `/siterule` | Custom stream-extraction rules for sites without built-in support | `/siterule list \| add <domain> <regex> \| remove <domain> [n] \| test <url>` |
 | `/admin` | Admin panel | `/admin` |

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     user_agent: str = (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
     )
+    # Last-resort fallback for script-built pages (React/Vue/Angular SPAs): open the page in headless Chromium and
+    # capture the video manifests/files the player requests. Needs the Chromium that the Docker image installs.
+    browser_fallback: bool = True
+    browser_timeout_seconds: float = 45.0
 
     # --- Content policy ------------------------------------------------------------
     adult_content: str = "off"  # off | optin (adults confirm 18+ with /setadult); admins can change it live

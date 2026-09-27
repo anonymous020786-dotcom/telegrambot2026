@@ -14,7 +14,7 @@ from ..registry import command
 from ..services.downloader import supported_extractor
 from ..services.pagevideo import find_videos, page_is_adult
 from ..services.policy import normalize_domain
-from ..services.sitecheck import check, default_targets
+from ..services.sitecheck import CATEGORIES, category_targets, check, default_targets, network_blocked
 from ..services.siterules import apply_rules, rules_for
 from ..utils import esc, extract_urls, human_duration, truncate, write_atomic
 from .common import Ctx, arg_text, fetch_replied_file, reply, svc, usage
@@ -205,24 +205,54 @@ async def cookies(update: Update, context: Ctx, user: User) -> None:
 
 
 @command(
-    "sitecheck", "admin", "Test right now which major platforms this server can read", "/sitecheck [url …]", admin=True
+    "sitecheck",
+    "admin",
+    "Test right now which sites this server can read: the major platforms, a category, all ~200, or links",
+    "/sitecheck [social|video|audio|news_tv|sports|education|files_cloud|adult|all] [url …]",
+    admin=True,
 )
 async def sitecheck(update: Update, context: Ctx, user: User) -> None:
     s = svc(context)
-    urls = extract_urls(arg_text(context))
-    targets = [(u, u) for u in urls] or default_targets()
-    status = await reply(update, f"🩺 Checking {len(targets)} sites…")
-    results = await check(s.downloader, targets)
+    text = arg_text(context)
+    urls = extract_urls(text)
+    names = [w.lower() for w in text.split() if w.lower() in (*CATEGORIES, "all")]
+    targets = [(u, u) for u in urls] + category_targets(names) if (urls or names) else default_targets()
+    if not targets:
+        await reply(update, usage("sitecheck") + "\nCategories: " + ", ".join(CATEGORIES))
+        return
+    status = await reply(update, f"🩺 Checking {len(targets)} sites… (big checks take a few minutes)")
+    results = await check(s.downloader, targets, concurrency=8 if len(targets) > 20 else 4)
     ok = sum(r.ok for r in results)
-    lines = [f"🩺 <b>Site check</b> · {ok}/{len(results)} working"]
-    for r in results:
-        mark = "✅" if r.ok else "❌"
+    blocked = [r for r in results if not r.ok and network_blocked(r.detail)]
+    header = f"🩺 <b>Site check</b> · {ok}/{len(results)} working"
+    if blocked:
+        header += f" · 🚫 {len(blocked)} unreachable from this server"
+    lines = []
+    # Long reports list problems first: broken sites, then unreachable ones, then the working ones.
+    for r in sorted(results, key=lambda r: (r.ok, network_blocked(r.detail))) if len(results) > 20 else results:
+        mark = "✅" if r.ok else ("🚫" if network_blocked(r.detail) else "❌")
         lines.append(
-            f"{mark} <b>{esc(truncate(r.name, 30))}</b> · {human_duration(r.seconds)} · {esc(truncate(r.detail, 80))}"
+            f"{mark} <b>{esc(truncate(r.name, 30))}</b> · {human_duration(r.seconds)} · {esc(truncate(r.detail, 70))}"
         )
-    lines.append("\nFailures are often fixed by /updateytdlp (then /restart), or by /cookies for login-walled sites.")
+    footer = "\n❌ = the site answered but extraction failed: often fixed by /updateytdlp (then /restart) or /cookies."
+    if blocked:
+        footer += "\n🚫 = this server can't reach the site (ISP/firewall block or DNS): set PROXY to route around it."
+    pages = chunk_lines([header, *lines, footer])
     if status:
-        await status.edit_text("\n".join(lines), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await status.edit_text(pages[0], parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+    for page in pages[1:]:
+        await reply(update, page)
+
+
+def chunk_lines(lines: list[str], limit: int = 3800) -> list[str]:
+    """Join lines into Telegram-sized messages (the hard limit is 4096 characters)."""
+    pages, current = [], ""
+    for line in lines:
+        if current and len(current) + len(line) + 1 > limit:
+            pages.append(current)
+            current = ""
+        current = f"{current}\n{line}" if current else line
+    return [*pages, current] if current else pages
 
 
 # ------------------------------------------------------------------ integrating new sites

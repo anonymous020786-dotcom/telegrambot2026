@@ -15,7 +15,24 @@ with the matching section below.
 - **Times of India and other `indiatimes.com` video pages** (`yt_dlp_plugins/extractor/slike.py`). The generic
   extractor downloaded a 4-second "not available" stub; now native videos come with every HLS quality and the
   MP4 files (up to 1080p), and pages whose player is a YouTube embed hand over to YouTube.
-- `scripts/link_check.py URL…` checks real links the way the bot handles them (yt-dlp, then the page fallback).
+- **Script-built pages (React/Vue/Angular SPAs):** when yt-dlp and the page scan find nothing, the bot opens the
+  page in headless Chromium, presses play, and downloads the HLS/DASH/Smooth Streaming manifest or video file the
+  player requests (the main player's video first, not the feed previews). `BROWSER_FALLBACK`,
+  `BROWSER_TIMEOUT_SECONDS`; build with `INSTALL_BROWSER=false` to leave Chromium out of the image.
+- **Codec preference:** `/setcodec <auto|h264|h265|av1|vp9>` and a settings button. The chosen resolution stays
+  first; at that resolution the chosen codec wins (H.264 plays on every Telegram client).
+- **MOV output** (`/setformat mov`), and lossless rewrapping: when MP4 was asked for but the download arrived as MKV,
+  FLV or MPEG-TS (HLS with unknown audio codecs, RTMP, live streams), the tracks are copied into MP4 so Telegram
+  plays it inline. If the codecs don't fit, the original file is sent.
+- **RTMP** (`rtmp://`) downloads: `rtmpdump` is now in the image.
+- Preview cards for direct video file links show the real resolution, codecs, frame rate and duration (ffprobe
+  reads the file header).
+- **`/sitecheck <category>`**: admins test a whole category from Telegram (`social`, `video`, `audio`, `news_tv`,
+  `sports`, `education`, `files_cloud`, `adult`, or `all` ~200 sites). Long reports list problems first, span
+  several messages, and mark sites this server can't reach at all (🚫, fix with `PROXY`) apart from broken ones.
+- `scripts/format_check.py` downloads public test streams (HLS with TS and fMP4/CMAF chunks, DASH, Smooth
+  Streaming, H.264/H.265/AV1/VP9 files, MKV/WebM/MOV) through the bot's download code.
+- `scripts/link_check.py URL…` checks real links the way the bot handles them (yt-dlp, the page scan, a browser).
 - The bot loads yt-dlp plugins at startup, so extractors in `yt_dlp_plugins/` count as supported sites.
 - `scripts/site_survey.py` checks about 200 popular sites by category using each extractor's sample video
   (`python -m scripts.site_survey [category …]` inside the container).

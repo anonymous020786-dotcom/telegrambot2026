@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
@@ -31,7 +33,10 @@ load_all_plugins()
 AUDIO_FORMATS = ("mp3", "m4a", "opus", "flac", "wav", "aac", "ogg")
 LOSSLESS = {"flac", "wav"}
 QUALITIES = ("best", "2160", "1440", "1080", "720", "480", "360", "240", "144", "worst")
-CONTAINERS = ("mp4", "mkv", "webm")
+CONTAINERS = ("mp4", "mkv", "webm", "mov")
+# Preferred video codec. "auto" keeps yt-dlp's ranking (usually AV1 > VP9 > H.265 > H.264); H.264 plays on every
+# Telegram client, H.265/AV1/VP9 give smaller files at the same quality.
+CODECS = ("auto", "h264", "h265", "av1", "vp9")
 TEMP_SUFFIXES = (".part", ".ytdl", ".temp", ".frag")
 
 
@@ -79,6 +84,7 @@ class Preset:
     mode: str = "video"  # video | audio | format | thumbnail | subs
     quality: str = "best"
     container: str = "mp4"
+    codec: str = "auto"
     audio_format: str = "mp3"
     audio_bitrate: int = 192
     format_id: str | None = None
@@ -118,7 +124,8 @@ class Preset:
             return f"subtitles ({self.sub_lang})"
         q = self.quality if self.quality in ("best", "worst") else f"{self.quality}p"
         extra = " clip" if self.section else ""
-        return f"{q} {self.container.upper()}{extra}"
+        codec = f" {self.codec.upper()}" if self.codec != "auto" else ""
+        return f"{q}{codec} {self.container.upper()}{extra}"
 
 
 @dataclass
@@ -203,6 +210,48 @@ def _simplify_formats(info: dict[str, Any]) -> list[FormatInfo]:
             )
         )
     return out
+
+
+def fill_direct_file_details(info: dict[str, Any], user_agent: str, timeout: float = 20) -> dict[str, Any]:
+    """Resolution, codecs and duration for a plain media file link, which yt-dlp reports without them.
+
+    ffprobe reads only the file header (a few hundred KB) over HTTP, so preview cards can show the real quality.
+    """
+    formats = info.get("formats") or []
+    single = formats[0] if len(formats) == 1 else (info if not formats else None)
+    url = (single or {}).get("url")
+    if not single or single.get("height") or not url or not str(url).startswith("http"):
+        return info
+    if single.get("protocol") not in (None, "http", "https"):
+        return info
+    cmd = ["ffprobe", "-v", "error", "-user_agent", user_agent, "-show_entries"]
+    cmd += ["stream=codec_type,codec_name,width,height,avg_frame_rate:format=duration", "-of", "json", str(url)]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False).stdout
+        data = json.loads(out or "{}")
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return info
+    streams = data.get("streams") or []
+    video = next((st for st in streams if st.get("codec_type") == "video"), None)
+    audio = next((st for st in streams if st.get("codec_type") == "audio"), None)
+    details: dict[str, Any] = {
+        "vcodec": video.get("codec_name") if video else "none",
+        "acodec": audio.get("codec_name") if audio else "none",
+    }
+    if video and video.get("width") and video.get("height"):
+        details.update(width=int(video["width"]), height=int(video["height"]))
+        num, _, den = str(video.get("avg_frame_rate") or "").partition("/")
+        if num.isdigit() and den.isdigit() and int(den):
+            details["fps"] = round(int(num) / int(den), 2)
+    targets = [single] if single is not info else []
+    for target in (*targets, info):
+        for key, value in details.items():
+            if target.get(key) in (None, "unknown"):
+                target[key] = value
+    if not info.get("duration") and (duration := (data.get("format") or {}).get("duration")):
+        with contextlib.suppress(ValueError):
+            info["duration"] = float(duration)
+    return info
 
 
 def media_info_from(info: dict[str, Any], url: str) -> MediaInfo:
@@ -294,6 +343,9 @@ def build_options(
         "postprocessors": [],
         "http_headers": headers,
     }
+    if preset.codec != "auto" and preset.mode in ("video", "format"):
+        # Keep the requested resolution first, then prefer the codec at that resolution.
+        opts["format_sort"] = ["res", f"vcodec:{preset.codec}"]
     if settings.proxy:
         opts["proxy"] = settings.proxy
     if cookies := settings.cookies_path():
@@ -356,6 +408,37 @@ def build_options(
     if preset.split_chapters:
         pps.append({"key": "FFmpegSplitChapters", "force_keyframes": False})
     return opts
+
+
+# Containers Telegram doesn't play inline, rewrapped into MP4 when the user asked for MP4.
+REWRAP_TO_MP4 = (".mkv", ".flv", ".ts")
+
+
+def rewrap(path: Path, container: str) -> Path:
+    """Losslessly move a finished video into the container the user asked for (no re-encoding).
+
+    yt-dlp falls back to MKV when it can't prove the tracks fit in MP4 (for example HLS audio with unknown codecs),
+    RTMP and some live streams arrive as FLV or MPEG-TS, and yt-dlp never produces MOV. ffmpeg copies the streams into the new container; if the codecs don't fit, the
+    original file is kept.
+    """
+    ext = path.suffix.lower()
+    if (container == "mp4" and ext not in REWRAP_TO_MP4) or container not in ("mp4", "mov") or ext == f".{container}":
+        return path
+    target = path.with_suffix(f".{container}")
+    cmd = ["ffmpeg", "-v", "error", "-y", "-i", str(path), "-map", "0:v", "-map", "0:a?", "-map", "0:s?"]
+    cmd += ["-c", "copy", "-c:s", "mov_text", "-movflags", "+faststart", str(target)]
+    try:
+        done = subprocess.run(cmd, capture_output=True, timeout=1800, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.warning("rewrap to %s failed for %s: %s", container, path.name, exc)
+        done = None
+    if done is not None and done.returncode == 0 and target.exists() and target.stat().st_size > 0:
+        path.unlink(missing_ok=True)
+        return target
+    target.unlink(missing_ok=True)
+    if done is not None:
+        log.info("kept %s: its codecs don't fit %s (%s)", path.name, container, done.stderr.decode()[-200:].strip())
+    return path
 
 
 def collect_outputs(out_dir: Path, preset: Preset) -> list[Path]:
@@ -442,7 +525,7 @@ class Downloader:
             info = ydl.extract_info(url, download=False)
             if info is None:
                 raise DownloadError("No media found")
-            return ydl.sanitize_info(info)
+            return fill_direct_file_details(ydl.sanitize_info(info), self.settings.user_agent)
 
     async def _guard(self, url: str) -> None:
         """Refuse links to private/local addresses before yt-dlp fetches them (see netguard)."""
@@ -510,6 +593,8 @@ class Downloader:
         except DownloadCancelled as exc:
             raise Cancelled() from exc
         files = collect_outputs(out_dir, preset)
+        if preset.mode in ("video", "format") and preset.container in ("mp4", "mov"):
+            files = [rewrap(f, preset.container) if ext_of(f) in VIDEO_EXTS else f for f in files]
         if not files:
             if not allow_adult and info and int(info.get("age_limit") or 0) >= 18:
                 raise AdultBlocked()

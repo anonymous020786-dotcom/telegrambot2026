@@ -113,7 +113,8 @@ CREATE TABLE IF NOT EXISTS kv (
 # Defaults for per-user preferences (see /settings).
 DEFAULT_USER_SETTINGS: dict[str, Any] = {
     "quality": "best",  # best | 2160 | 1440 | 1080 | 720 | 480 | 360 | worst
-    "container": "mp4",  # mp4 | mkv | webm
+    "container": "mp4",  # mp4 | mkv | webm | mov
+    "codec": "auto",  # auto | h264 | h265 | av1 | vp9
     "audio_format": "mp3",  # mp3 | m4a | opus | flac | wav | aac | ogg
     "audio_bitrate": 192,  # kbps for lossy audio
     "delivery": "auto",  # auto | telegram | split | link | s3

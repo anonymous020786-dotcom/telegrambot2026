@@ -5,7 +5,11 @@
 #                docker compose --profile local-api up -d
 services:
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        # false = no headless Chromium (image ~1.5 GB smaller, no SPA fallback)
+        INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
     # Set BOT_IMAGE=ghcr.io/anonymous020786-dotcom/telegrambot2026:latest in .env to run the prebuilt release image
     # (docker compose pull bot && docker compose up -d) instead of building on the server.
     image: ${BOT_IMAGE:-telegram-media-bot:latest}
